@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
 
 const sql = `
@@ -57,6 +58,20 @@ CREATE INDEX IF NOT EXISTS idx_stock_movements_product_date ON stock_movements(p
 try {
   await pool.query(sql);
   console.log('Database tables created successfully.');
+
+  // Seed default users so you can log in immediately
+  const hashedOwner = await bcrypt.hash('password123', 10);
+  const hashedBarman = await bcrypt.hash('password123', 10);
+
+  await pool.query(`
+    INSERT INTO users (name, username, password_hash, role)
+    VALUES 
+      ('Bar Owner', 'owner', $1, 'owner'),
+      ('Barman Staff', 'barman', $2, 'barman')
+    ON CONFLICT (username) DO NOTHING;
+  `, [hashedOwner, hashedBarman]);
+
+  console.log('Default users (owner / barman) created successfully.');
 } catch (e) {
   console.error(e);
   process.exitCode = 1;
