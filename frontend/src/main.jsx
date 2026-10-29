@@ -4,7 +4,7 @@ import './style.css';
 
 const API = (
   import.meta.env.VITE_API_URL ||
-  'https://bar-stock-backend-yflx.'
+  'https://malyn-bar-backend.onrender.com'
 ).replace(/\/+$/, '');
 
 function App() {
