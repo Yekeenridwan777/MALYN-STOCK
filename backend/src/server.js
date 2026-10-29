@@ -346,6 +346,10 @@ app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({ status: 'online', message: 'Malyn Bar Stock API is running' });
 });
-
+app.use('/api/auth/login', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  validate: { xForwardedForHeader: false, trustProxy: false }
+}));
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`Bar stock API running on http://localhost:${port}`));

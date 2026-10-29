@@ -57,9 +57,9 @@ CREATE INDEX IF NOT EXISTS idx_stock_movements_product_date ON stock_movements(p
 
 try {
   await pool.query(sql);
-  console.log('Database tables created successfully.');
+  console.log('Database tables checked/created successfully.');
 
-  // Seed default users so you can log in immediately
+  // Always upsert or ensure default users exist with password: password123
   const hashedOwner = await bcrypt.hash('password123', 10);
   const hashedBarman = await bcrypt.hash('password123', 10);
 
@@ -68,10 +68,11 @@ try {
     VALUES 
       ('Bar Owner', 'owner', $1, 'owner'),
       ('Barman Staff', 'barman', $2, 'barman')
-    ON CONFLICT (username) DO NOTHING;
+    ON CONFLICT (username) 
+    DO UPDATE SET password_hash = EXCLUDED.password_hash;
   `, [hashedOwner, hashedBarman]);
 
-  console.log('Default users (owner / barman) created successfully.');
+  console.log('Default users (owner / barman) synchronized successfully.');
 } catch (e) {
   console.error(e);
   process.exitCode = 1;
