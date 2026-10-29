@@ -346,7 +346,6 @@ app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({ status: 'online', message: 'Malyn Bar Stock API is running' });
 });
-// Automatically create tables on startup if they don't exist
-initDb().catch(err => console.error('Database initialization error:', err));
+
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`Bar stock API running on http://localhost:${port}`));
