@@ -19,7 +19,7 @@ app.use('/api/auth/login', rateLimit({
   validate: { xForwardedForHeader: false, trustProxy: false }
 }));
 
-// Auto-initialize tables and seed default user on startup
+// Auto-initialize tables and seed/sync default owner user on startup
 async function ensureDatabase() {
   try {
     await pool.query(`
@@ -74,14 +74,22 @@ async function ensureDatabase() {
       );
     `);
 
-    // Ensure owner account exists
+    // Ensure owner account always exists and password is synced
     const hashedOwner = await bcrypt.hash('password123', 10);
-    await pool.query(`
-      INSERT INTO users (name, username, password_hash, role)
-      VALUES ('Bar Owner', 'owner', $1, 'owner')
-      ON CONFLICT (username) 
-      DO UPDATE SET password_hash = EXCLUDED.password_hash;
-    `, [hashedOwner]);
+    const existingOwner = await pool.query('SELECT id FROM users WHERE username = $1', ['owner']);
+    
+    if (existingOwner.rows.length === 0) {
+      await pool.query(`
+        INSERT INTO users (name, username, password_hash, role)
+        VALUES ('Bar Owner', 'owner', $1, 'owner')
+      `, [hashedOwner]);
+      console.log('Default owner account created successfully.');
+    } else {
+      await pool.query(`
+        UPDATE users SET password_hash = $1 WHERE username = 'owner'
+      `, [hashedOwner]);
+      console.log('Default owner account password synchronized.');
+    }
 
     console.log('Database tables and default owner account ready.');
   } catch (err) {
