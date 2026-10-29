@@ -6,9 +6,10 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { pool } from './db.js';
 import { requireAuth, allowRoles } from './auth.js';
-import { initDb } from './initDb.js'; // Make sure you have this exported in initDb.js
+
 dotenv.config();
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json({ limit: '200kb' }));
 app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30 }));
