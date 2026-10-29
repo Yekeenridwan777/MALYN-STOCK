@@ -50,10 +50,10 @@ function App() {
 
   async function loadAll() {
     try {
-      const p = await api('/products'); setProducts(p.products);
-      const d = await api(`/dockets?search=${encodeURIComponent(search)}`); setDockets(d.dockets);
+      const p = await api('/api/products'); setProducts(p.products);
+      const d = await api(`/api/dockets?search=${encodeURIComponent(search)}`); setDockets(d.dockets);
       if (isOwner) {
-        const r = await api('/reports/summary'); setReport(r);
+        const r = await api('/api/reports/summary'); setReport(r);
       }
     } catch (e) { setError(e.message); }
   }
@@ -63,7 +63,7 @@ function App() {
   async function login(e) {
     e.preventDefault(); setError(''); setNotice('');
     try {
-      const result = await fetch(`${API}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+      const result = await fetch(`${API}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
       const data = await result.json();
       if (!result.ok) throw new Error(data.error || 'Sign in failed.');
       localStorage.setItem('bar_token', data.token); localStorage.setItem('bar_user', JSON.stringify(data.user));
@@ -86,14 +86,14 @@ function App() {
       if (!items.length) throw new Error('Add at least one drink.');
       
       if (editingDocket) {
-        await api(`/dockets/${editingDocket.id}/edit`, { 
+        await api(`/api/dockets/${editingDocket.id}/edit`, { 
           method: 'PUT', 
           body: JSON.stringify({ newDocketNumber: editDocketNumber, items }) 
         });
         setEditingDocket(null);
         setEditDocketNumber('');
       } else {
-        await api('/dockets/barman', { method: 'POST', body: JSON.stringify({ docketNumber, items }) });
+        await api('/api/dockets/barman', { method: 'POST', body: JSON.stringify({ docketNumber, items }) });
       }
       setDocketNumber(''); setItemRows([{ productId: '', quantity: 1 }]);
     }, editingDocket ? 'Docket updated and stock adjusted successfully.' : 'Docket recorded and stock automatically deducted.');
@@ -109,14 +109,14 @@ function App() {
   async function addProduct(e) {
     e.preventDefault();
     await runAction(async () => {
-      await api('/products', { method: 'POST', body: JSON.stringify(newProduct) });
+      await api('/api/products', { method: 'POST', body: JSON.stringify(newProduct) });
       setNewProduct({ name: '', openingQuantity: 0, lowStockThreshold: 10, sellingPrice: 0 });
     }, 'Drink added successfully.');
   }
 
   async function updateProductPrice(id) {
     await runAction(async () => {
-      await api(`/products/${id}`, { method: 'PUT', body: JSON.stringify({ sellingPrice: Number(tempPrice) }) });
+      await api(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify({ sellingPrice: Number(tempPrice) }) });
       setEditingPriceId(null);
       setTempPrice('');
     }, 'Price updated successfully.');
@@ -124,13 +124,13 @@ function App() {
 
   async function deleteProduct(id) {
     if (!confirm('Are you sure you want to delete this drink?')) return;
-    await runAction(() => api(`/products/${id}`, { method: 'DELETE' }), 'Drink removed.');
+    await runAction(() => api(`/api/products/${id}`, { method: 'DELETE' }), 'Drink removed.');
   }
 
   async function receiveStock(e) {
     e.preventDefault();
     await runAction(async () => {
-      await api('/stock/receive', { method: 'POST', body: JSON.stringify(receive) });
+      await api('/api/stock/receive', { method: 'POST', body: JSON.stringify(receive) });
       setReceive({ productId: '', quantity: 1, reference: '' });
     }, 'Stock received and recorded.');
   }
@@ -138,14 +138,13 @@ function App() {
   async function adjustStock(e) {
     e.preventDefault();
     await runAction(async () => {
-      await api('/stock/adjust', { method: 'POST', body: JSON.stringify(adjust) });
+      await api('/api/stock/adjust', { method: 'POST', body: JSON.stringify(adjust) });
       setAdjust({ productId: '', quantityChange: -1, reason: '' });
     }, 'Stock adjustment recorded.');
   }
 
   const currency = n => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(n || 0));
   
-  // STRICTLY calculated local active stock value ignoring any 0 quantity items
   const calculatedActiveStockValue = products.reduce((acc, p) => {
     const qty = Number(p.quantity) || 0;
     const price = Number(p.selling_price) || 0;
@@ -262,6 +261,6 @@ function ProductTable({products,currency}) { return <div className="table-wrap">
     {Number(p.quantity) === 0 ? 'Out of stock' : Number(p.quantity) <= Number(p.low_stock_threshold) ? 'Low stock' : 'In stock'}
   </span>
 </td></tr>)}</tbody></table>{!products.length&&<p className="empty">No products found.</p>}</div>; }
-function DocketTable({dockets,onEdit}) { return <div className="table-wrap"><table><thead><tr><th>Docket #</th><th>Items Sold</th><th>Status</th><th>Logged By</th><th>Created</th><th>Action</th></tr></thead><tbody>{dockets.map(d=><tr key={d.id}><td><strong>{d.docket_number}</strong></td><td>{(d.items||[]).map(i=>`${i.productName} × ${i.quantity}`).join(', ')}</td><td><span className="pill good">Issued</span></td><td>{d.barman_name || 'Staff'}</td><td>{new Date(d.created_at).toLocaleString()}</td><td><button className="small secondary" onClick={()=>onEdit(d)}>Edit / Return</button></td></tr>)}</tbody></table>{!dockets.length&&<p className="empty">No dockets found.</p>}</div>; }
+function DocketTable({dockets,onEdit}) { return <div className="table-wrap"><table><thead><tr><th>Docket #</th><th>Items Sold</th><th>Status</th><th>Logged By</th><th>Created</th><th>Action</th></tr></thead><tbody>{dockets.map(d=><tr key={d.id}><td><strong>{d.docket_number}</strong></td><td>{(d.items||[]).map(i=>`${i.productName} × ${i.quantity}`).join(', ')}</td><td><span className="pill good">Issued</span></td><td>{d.created_by_name || 'Staff'}</td><td>{new Date(d.created_at).toLocaleString()}</td><td><button className="small secondary" onClick={()=>onEdit(d)}>Edit / Return</button></td></tr>)}</tbody></table>{!dockets.length&&<p className="empty">No dockets found.</p>}</div>; }
 
 createRoot(document.getElementById('root')).render(<App />);
