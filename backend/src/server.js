@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { pool } from './db.js';
 import { requireAuth, allowRoles } from './auth.js';
-
+import { initDb } from './initDb.js'; // Make sure you have this exported in initDb.js
 dotenv.config();
 const app = express();
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' }));
@@ -345,5 +345,7 @@ app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
 app.get('/', (_req, res) => {
   res.json({ status: 'online', message: 'Malyn Bar Stock API is running' });
 });
+// Automatically create tables on startup if they don't exist
+initDb().catch(err => console.error('Database initialization error:', err));
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`Bar stock API running on http://localhost:${port}`));
