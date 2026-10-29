@@ -12,7 +12,85 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json({ limit: '200kb' }));
-app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30 }));
+
+app.use('/api/auth/login', rateLimit({ 
+  windowMs: 15 * 60 * 1000, 
+  limit: 30,
+  validate: { xForwardedForHeader: false, trustProxy: false }
+}));
+
+// Auto-initialize tables and seed default user on startup
+async function ensureDatabase() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('owner','barman','waitress')),
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS products (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'bottle',
+        quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+        low_stock_threshold INTEGER NOT NULL DEFAULT 10 CHECK (low_stock_threshold >= 0),
+        selling_price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (selling_price >= 0),
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS dockets (
+        id SERIAL PRIMARY KEY,
+        docket_number TEXT UNIQUE NOT NULL,
+        waitress_id INTEGER NOT NULL REFERENCES users(id),
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','issued','cancelled')),
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        issued_by INTEGER REFERENCES users(id),
+        issued_at TIMESTAMPTZ
+      );
+      CREATE TABLE IF NOT EXISTS docket_items (
+        id SERIAL PRIMARY KEY,
+        docket_id INTEGER NOT NULL REFERENCES dockets(id) ON DELETE RESTRICT,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        unit_price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0)
+      );
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        movement_type TEXT NOT NULL CHECK (movement_type IN ('opening','received','issued','adjustment','breakage','void_reversal')),
+        quantity_change INTEGER NOT NULL CHECK (quantity_change <> 0),
+        balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+        docket_id INTEGER REFERENCES dockets(id),
+        reference TEXT,
+        reason TEXT,
+        performed_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Ensure owner account exists
+    const hashedOwner = await bcrypt.hash('password123', 10);
+    await pool.query(`
+      INSERT INTO users (name, username, password_hash, role)
+      VALUES ('Bar Owner', 'owner', $1, 'owner')
+      ON CONFLICT (username) 
+      DO UPDATE SET password_hash = EXCLUDED.password_hash;
+    `, [hashedOwner]);
+
+    console.log('Database tables and default owner account ready.');
+  } catch (err) {
+    console.error('Failed to initialize database on startup:', err);
+  }
+}
+
+// Run database setup before starting express
+await ensureDatabase();
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
@@ -72,7 +150,6 @@ app.post('/api/products', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Update product price or low-stock threshold (Owner only)
 app.put('/api/products/:id', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.params.id);
   const { sellingPrice, lowStockThreshold } = req.body || {};
@@ -97,7 +174,6 @@ app.put('/api/products/:id', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Delete / Soft-delete a drink (Owner only)
 app.delete('/api/products/:id', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.params.id);
   if (!Number.isInteger(productId)) return res.status(400).json({ error: 'Invalid product.' });
@@ -145,7 +221,6 @@ app.get('/api/staff', allowRoles('owner'), async (_req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load staff.' }); }
 });
 
-// Load all dockets
 app.get('/api/dockets', async (req, res) => {
   const search = String(req.query.search || '').trim();
   try {
@@ -167,7 +242,6 @@ app.get('/api/dockets', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load dockets.' }); }
 });
 
-// Barman-entered paper docket (Schema-safe with waitress_id)
 app.post('/api/dockets/barman', allowRoles('owner','barman'), async (req, res) => {
   const docketNumber = String(req.body?.docketNumber || '').trim();
   const items = req.body?.items;
@@ -221,7 +295,6 @@ app.post('/api/dockets/barman', allowRoles('owner','barman'), async (req, res) =
   } finally { client.release(); }
 });
 
-// Barman edit / return route
 app.put('/api/dockets/:id/edit', allowRoles('owner','barman'), async (req, res) => {
   const docketId = Number(req.params.id);
   const newDocketNumber = String(req.body?.newDocketNumber || '').trim();
@@ -245,7 +318,6 @@ app.put('/api/dockets/:id/edit', allowRoles('owner','barman'), async (req, res) 
       if (dup.rows.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'That docket number already exists.' }); }
     }
 
-    // 1. Revert previous stock movements for this docket
     const oldItems = await client.query('SELECT * FROM docket_items WHERE docket_id=$1', [docketId]);
     for (const oldItem of oldItems.rows) {
       const pr = await client.query('SELECT id, quantity FROM products WHERE id=$1 FOR UPDATE', [oldItem.product_id]);
@@ -261,10 +333,8 @@ app.put('/api/dockets/:id/edit', allowRoles('owner','barman'), async (req, res) 
     }
     await client.query('DELETE FROM docket_items WHERE docket_id=$1', [docketId]);
 
-    // 2. Update docket metadata
     await client.query('UPDATE dockets SET docket_number=$1 WHERE id=$2', [targetDocketNum, docketId]);
 
-    // 3. Apply new items and deduct stock
     for (const item of cleanItems) {
       if (item.quantity <= 0) continue;
       const pr = await client.query('SELECT id, name, quantity, selling_price, active FROM products WHERE id=$1 FOR UPDATE', [item.productId]);
@@ -343,13 +413,10 @@ app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
   } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ error: 'Could not adjust stock.' }); }
   finally { client.release(); }
 });
+
 app.get('/', (_req, res) => {
   res.json({ status: 'online', message: 'Malyn Bar Stock API is running' });
 });
-app.use('/api/auth/login', rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 30,
-  validate: { xForwardedForHeader: false, trustProxy: false }
-}));
+
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`Bar stock API running on http://localhost:${port}`));
