@@ -342,6 +342,8 @@ app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
   } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ error: 'Could not adjust stock.' }); }
   finally { client.release(); }
 });
-
+app.get('/', (_req, res) => {
+  res.json({ status: 'online', message: 'Malyn Bar Stock API is running' });
+});
 const port = process.env.PORT || 4000;
 app.listen(port, () => console.log(`Bar stock API running on http://localhost:${port}`));
