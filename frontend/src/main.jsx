@@ -179,16 +179,16 @@ function App() {
       if (editingFoodDocket) {
         await api(`/api/food/dockets/${editingFoodDocket.id}/edit`, {
           method: 'PUT',
-          body: JSON.stringify({ newDocketNumber: editFoodDocketNum, items })
+          body: JSON.stringify({ newDocketNumber: editFoodDocketNum, waitressId: selectedWaitress ? Number(selectedWaitress) : null, items })
         });
         setEditingFoodDocket(null);
       } else {
         await api('/api/food/dockets', {
           method: 'POST',
-          body: JSON.stringify({ docketNumber: foodDocketNum, items })
+          body: JSON.stringify({ docketNumber: foodDocketNum, waitressId: selectedWaitress ? Number(selectedWaitress) : null, items })
         });
       }
-      setFoodDocketNum(''); setEditFoodDocketNum(''); setFoodItemRows([{ menuItemId: '', quantity: 1 }]);
+      setFoodDocketNum(''); setEditFoodDocketNum(''); setSelectedWaitress(''); setFoodItemRows([{ menuItemId: '', quantity: 1 }]);
     }, editingFoodDocket ? 'Food docket updated successfully.' : 'Food docket recorded successfully.');
   }
 
@@ -385,6 +385,12 @@ function App() {
               <h2>{editingFoodDocket ? `Edit Food Docket #${editingFoodDocket.docket_number}` : 'Record Kitchen Food Docket'}</h2>
               <form className="stack" onSubmit={recordFoodDocket}>
                 <label>Food Docket Number<input required value={editingFoodDocket ? editFoodDocketNum : foodDocketNum} onChange={e=>editingFoodDocket ? setEditFoodDocketNum(e.target.value) : setFoodDocketNum(e.target.value)} placeholder="e.g. F201"/></label>
+                <label>Responsible Waitress (Optional)
+                  <select value={selectedWaitress} onChange={e=>setSelectedWaitress(e.target.value)}>
+                    <option value="">-- Choose Waitress --</option>
+                    {waitresses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </label>
                 <h3>Food Items Ordered</h3>
                 {foodItemRows.map((row, i) => (
                   <div className="form-grid item-row" key={i}>
@@ -535,6 +541,7 @@ function App() {
                               <button className="small secondary" onClick={()=>{
                                 setEditingFoodDocket(d);
                                 setEditFoodDocketNum(d.docket_number);
+                                setSelectedWaitress(d.waitress_id || '');
                                 setFoodItemRows(d.items?.map(it => ({ menuItemId: it.menuItemId, quantity: it.quantity })) || [{menuItemId:'', quantity:1}]);
                                 setTab('chefDockets');
                               }}>Edit</button>
