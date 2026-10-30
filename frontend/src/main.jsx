@@ -67,11 +67,16 @@ function App() {
     try {
       const promises = [
         api('/api/products').then(p => setProducts(p.products || [])),
-        api('/api/food/menu').then(m => setFoodMenu(m.menu || [])),
-        api('/api/waitresses').then(w => setWaitresses(w.waitresses || [])),
-        api(`/api/dockets?search=${encodeURIComponent(search)}`).then(d => setDockets(d.dockets || [])),
-        api(`/api/food/dockets?search=${encodeURIComponent(search)}`).then(fd => setFoodDockets(fd.dockets || []))
+        api('/api/food/menu').then(m => setFoodMenu(m.menu || []))
       ];
+
+      if (isOwner || isBarman || isChef) {
+        promises.push(
+          api('/api/waitresses').then(w => setWaitresses(w.waitresses || [])),
+          api(`/api/dockets?search=${encodeURIComponent(search)}`).then(d => setDockets(d.dockets || [])),
+          api(`/api/food/dockets?search=${encodeURIComponent(search)}`).then(fd => setFoodDockets(fd.dockets || []))
+        );
+      }
 
       if (isOwner) {
         promises.push(
@@ -263,6 +268,7 @@ function App() {
           </>}
           {isWaitress && <>
             <button className={tab==='myAccounting'?'nav-item active':'nav-item'} onClick={()=>setTab('myAccounting')}>My Sales & Totals</button>
+            <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Check Stock & Prices</button>
           </>}
         </nav>
         <button className="logout" onClick={logout}>Sign out</button>
@@ -289,15 +295,15 @@ function App() {
         {isWaitress && tab === 'myAccounting' && waitressAccounting && (
           <div className="stack">
             <section className="metric-grid">
-              <Metric label="Drink Sales Total" value={currency(waitressAccounting.drinkTotal)} note="From drink dockets" />
-              <Metric label="Food Sales Total" value={currency(waitressAccounting.foodTotal)} note="From kitchen dockets" />
-              <Metric label="Combined Total" value={currency(waitressAccounting.combinedTotal)} note="Total amount due" />
-              <Metric label="Total Dockets" value={waitressAccounting.docketsCount} note="Assigned orders" />
+              <Metric label="Drink Sales Total" value={currency(waitressAccounting.drinkTotal)} note="Active drink dockets" />
+              <Metric label="Food Sales Total" value={currency(waitressAccounting.foodTotal)} note="Active kitchen dockets" />
+              <Metric label="Total Money Due" value={currency(waitressAccounting.combinedTotal)} note="Combined amount due" />
+              <Metric label="Assigned Dockets" value={waitressAccounting.docketsCount} note="Total orders" />
             </section>
             
             <section className="panel">
-              <h2>My Accounting & Dockets</h2>
-              <p className="muted">Your assigned drink and food dockets. Settlement status is updated by the bar owner.</p>
+              <h2>My Daily Accounting & Dockets</h2>
+              <p className="muted">Your assigned drink and food dockets. Status updates to <strong>Balanced</strong> once the owner confirms and locks your cash settlement.</p>
               
               <h3>Drink Dockets</h3>
               <div className="table-wrap">
@@ -316,7 +322,7 @@ function App() {
                 </table>
               </div>
 
-              <h3>Food Dockets</h3>
+              <h3 style={{marginTop: '20px'}}>Food Dockets</h3>
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Docket #</th><th>Amount</th><th>Status</th><th>Time</th></tr></thead>
@@ -336,7 +342,7 @@ function App() {
           </div>
         )}
 
-       {/* BARMAN PORTAL */}
+        {/* BARMAN PORTAL */}
         {isBarman && tab === 'barmanDockets' && (
           <div className="stack">
             <section className="panel">
@@ -465,7 +471,7 @@ function App() {
         {tab === 'dockets' && (
           <div className="stack">
             <section className="panel">
-              <h2>Drink Dockets (Including Last Week)</h2>
+              <h2>Drink Dockets</h2>
               <input className="search" placeholder="Search docket number..." value={search} onChange={e=>setSearch(e.target.value)} />
               <div className="table-wrap">
                 <table>
@@ -574,6 +580,7 @@ function App() {
           <div className="stack">
             <section className="panel">
               <h2>Drink Inventory & Stock</h2>
+              <p className="muted">{isOwner ? 'Active drinks, quantities, and owner price controls (Click a price to edit).' : 'Current stock levels and drink prices.'}</p>
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Drink</th><th>Unit</th><th>Quantity</th><th>Price (₦)</th><th>Status</th>{isOwner && <th>Actions</th>}</tr></thead>

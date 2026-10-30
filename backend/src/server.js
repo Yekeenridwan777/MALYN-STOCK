@@ -107,7 +107,6 @@ async function ensureDatabase() {
       );
     `);
 
-    // Remove old example names from database so they disappear entirely
     await pool.query("DELETE FROM users WHERE username IN ('blessing', 'mary')");
 
     const ownerPass = process.env.SEED_OWNER_PASSWORD || 'password123';
@@ -115,7 +114,6 @@ async function ensureDatabase() {
     const chefPass = process.env.SEED_CHEF_PASSWORD || 'chef123';
     const waitressPass = process.env.SEED_WAITRESS_PASSWORD || 'waitress123';
 
-    // Seed generic numbered waitresses only
     const usersToSeed = [
       { name: 'Bar Owner', username: 'owner', role: 'owner', pass: ownerPass },
       { name: 'Barman Staff', username: 'barman', role: 'barman', pass: barmanPass },
@@ -625,13 +623,13 @@ app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) 
       pool.query(
         `SELECT COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total
          FROM dockets d JOIN docket_items di ON di.docket_id=d.id
-         WHERE d.waitress_id=$1 AND d.status='issued'`,
+         WHERE d.waitress_id=$1 AND d.status='issued' AND d.settled=FALSE`,
         [waitressId]
       ),
       pool.query(
         `SELECT COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total
          FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
-         WHERE fd.waitress_id=$1 AND fd.status='issued'`,
+         WHERE fd.waitress_id=$1 AND fd.status='issued' AND fd.settled=FALSE`,
         [waitressId]
       ),
       pool.query(
@@ -659,7 +657,7 @@ app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) 
       drinkTotal,
       foodTotal,
       combinedTotal,
-      docketsCount: docketsList.rows.length + foodDocketsList.rows.length,
+      docketsCount: docketsList.rows.filter(d => !d.settled).length + foodDocketsList.rows.filter(d => !d.settled).length,
       drinkDockets: docketsList.rows,
       foodDockets: foodDocketsList.rows
     });
@@ -677,13 +675,13 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res)
         pool.query(
           `SELECT COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total
            FROM dockets d JOIN docket_items di ON di.docket_id=d.id
-           WHERE d.waitress_id=$1 AND d.status='issued'`,
+           WHERE d.waitress_id=$1 AND d.status='issued' AND d.settled=FALSE`,
           [w.id]
         ),
         pool.query(
           `SELECT COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total
            FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
-           WHERE fd.waitress_id=$1 AND fd.status='issued'`,
+           WHERE fd.waitress_id=$1 AND fd.status='issued' AND fd.settled=FALSE`,
           [w.id]
         ),
         pool.query(
@@ -697,7 +695,6 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res)
         ),
         pool.query(
           `SELECT fd.id, fd.docket_number, fd.settled, fd.settled_at, fd.created_at,
-                  COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total_amount,
                   COALESCE(json_agg(json_build_object('itemName',m.name,'servingOption',m.serving_option,'quantity',fdi.quantity,'unitPrice',fdi.unit_price))
                     FILTER (WHERE fdi.id IS NOT NULL),'[]') AS items
            FROM food_dockets fd LEFT JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id LEFT JOIN food_menu m ON m.id=fdi.menu_item_id
