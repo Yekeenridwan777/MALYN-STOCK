@@ -340,6 +340,7 @@ app.get('/api/dockets', async (req, res) => {
     const result = await pool.query(
       `SELECT d.id,d.docket_number,d.status,d.settled,d.settled_at,d.notes,d.created_at,
               c.name AS created_by_name, w.name AS waitress_name, w.id AS waitress_id,
+              COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total_amount,
               COALESCE(json_agg(json_build_object('productId',p.id,'productName',p.name,'quantity',di.quantity,'unitPrice',di.unit_price))
                 FILTER (WHERE di.id IS NOT NULL),'[]') AS items
        FROM dockets d
@@ -503,6 +504,7 @@ app.get('/api/food/dockets', async (req, res) => {
     const result = await pool.query(
       `SELECT d.id,d.docket_number,d.status,d.settled,d.settled_at,d.created_at,
               c.name AS created_by_name, w.name AS waitress_name, w.id AS waitress_id,
+              COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total_amount,
               COALESCE(json_agg(json_build_object('menuItemId',m.id,'itemName',m.name,'servingOption',m.serving_option,'quantity',fdi.quantity,'unitPrice',fdi.unit_price))
                 FILTER (WHERE fdi.id IS NOT NULL),'[]') AS items
        FROM food_dockets d
@@ -701,6 +703,7 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res)
         ),
         pool.query(
           `SELECT fd.id, fd.docket_number, fd.settled, fd.settled_at, fd.created_at,
+                  COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total_amount,
                   COALESCE(json_agg(json_build_object('itemName',m.name,'servingOption',m.serving_option,'quantity',fdi.quantity,'unitPrice',fdi.unit_price))
                     FILTER (WHERE fdi.id IS NOT NULL),'[]') AS items
            FROM food_dockets fd LEFT JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id LEFT JOIN food_menu m ON m.id=fdi.menu_item_id
