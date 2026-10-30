@@ -336,7 +336,7 @@ function App() {
           </div>
         )}
 
-        {/* BARMAN PORTAL */}
+       {/* BARMAN PORTAL */}
         {isBarman && tab === 'barmanDockets' && (
           <div className="stack">
             <section className="panel">
@@ -345,7 +345,7 @@ function App() {
                 <label>Paper Docket Number<input required value={docketNumber} onChange={e=>setDocketNumber(e.target.value)} placeholder="e.g. D101"/></label>
                 <label>Responsible Waitress (Optional)
                   <select value={selectedWaitress} onChange={e=>setSelectedWaitress(e.target.value)}>
-                    <option value="">Select waitress</option>
+                    <option value="">-- Choose Waitress --</option>
                     {waitresses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
                 </label>
@@ -354,7 +354,7 @@ function App() {
                   <div className="form-grid item-row" key={i}>
                     <label>Drink
                       <select required value={row.productId} onChange={e=>setItemRows(old=>old.map((x,j)=>j===i?{...x,productId:e.target.value}:x))}>
-                        <option value="">Select drink</option>
+                        <option value="">-- Select drink --</option>
                         {products.map(p => <option key={p.id} value={p.id}>{p.name} (Stock: {p.quantity}) - ₦{p.selling_price}</option>)}
                       </select>
                     </label>

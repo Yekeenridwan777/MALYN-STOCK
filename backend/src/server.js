@@ -19,7 +19,6 @@ app.use('/api/auth/login', rateLimit({
   validate: { xForwardedForHeader: false, trustProxy: false }
 }));
 
-// Business-day SQL helper (6:00 AM rule: business day starts at 06:00:00 and ends next day at 05:59:59)
 const BUSINESS_DAY_SQL = `(created_at - INTERVAL '6 hours')::date`;
 
 async function ensureDatabase() {
@@ -35,7 +34,6 @@ async function ensureDatabase() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       
-      -- Ensure role check constraint supports all 4 roles cleanly
       ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
       ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner','barman','waitress','chef'));
 
@@ -109,11 +107,15 @@ async function ensureDatabase() {
       );
     `);
 
+    // Remove old example names from database so they disappear entirely
+    await pool.query("DELETE FROM users WHERE username IN ('blessing', 'mary')");
+
     const ownerPass = process.env.SEED_OWNER_PASSWORD || 'password123';
     const barmanPass = process.env.SEED_BARMAN_PASSWORD || 'barman123';
     const chefPass = process.env.SEED_CHEF_PASSWORD || 'chef123';
     const waitressPass = process.env.SEED_WAITRESS_PASSWORD || 'waitress123';
 
+    // Seed generic numbered waitresses only
     const usersToSeed = [
       { name: 'Bar Owner', username: 'owner', role: 'owner', pass: ownerPass },
       { name: 'Barman Staff', username: 'barman', role: 'barman', pass: barmanPass },
@@ -133,7 +135,7 @@ async function ensureDatabase() {
       if (check.rows.length === 0) {
         await pool.query('INSERT INTO users (name, username, password_hash, role) VALUES ($1, $2, $3, $4)', [u.name, u.username, hashed, u.role]);
       } else {
-        await pool.query('UPDATE users SET password_hash = $1, role = $3 WHERE username = $2', [hashed, u.username, u.role]);
+        await pool.query('UPDATE users SET password_hash = $1, role = $3, name = $4 WHERE username = $2', [hashed, u.username, u.role, u.name]);
       }
     }
 
@@ -241,7 +243,6 @@ app.delete('/api/products/:id', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Receive Stock (Owner)
 app.post('/api/stock/receive', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.body?.productId), qty = Number(req.body?.quantity);
   const reference = String(req.body?.reference || '').trim();
@@ -267,7 +268,6 @@ app.post('/api/stock/receive', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Stock Adjustments (Owner)
 app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.body?.productId), delta = Number(req.body?.quantityChange);
   const reason = String(req.body?.reason || '').trim();
@@ -291,7 +291,6 @@ app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Food Menu & Pricing Management (Owner Only)
 app.get('/api/food/menu', async (_req, res) => {
   try {
     const result = await pool.query('SELECT id,name,serving_option,price,active FROM food_menu WHERE active=TRUE ORDER BY name, serving_option');
@@ -331,7 +330,6 @@ app.put('/api/food/menu/:id', allowRoles('owner'), async (req, res) => {
   }
 });
 
-// Drink Dockets
 app.get('/api/dockets', async (req, res) => {
   const search = String(req.query.search || '').trim();
   try {
@@ -495,7 +493,6 @@ app.delete('/api/dockets/:id', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Food Dockets
 app.get('/api/food/dockets', async (req, res) => {
   const search = String(req.query.search || '').trim();
   try {
@@ -621,7 +618,6 @@ app.delete('/api/food/dockets/:id', allowRoles('owner'), async (req, res) => {
   } finally { client.release(); }
 });
 
-// Waitress Portal API
 app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) => {
   try {
     const waitressId = req.user.id;
@@ -672,7 +668,6 @@ app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) 
   }
 });
 
-// Owner's Waitress Accounting & Settlements
 app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res) => {
   try {
     const waitresses = await pool.query("SELECT id, name, username FROM users WHERE role='waitress' AND active=TRUE ORDER BY name");
@@ -760,7 +755,6 @@ app.post('/api/owner/settle-waitress/:id', allowRoles('owner'), async (req, res)
   } finally { client.release(); }
 });
 
-// Reports & Owner Summary
 app.get('/api/reports/summary', allowRoles('owner'), async (_req, res) => {
   try {
     const [stock, issuedDrinks, issuedFood, movements] = await Promise.all([
