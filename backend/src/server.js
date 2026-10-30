@@ -19,7 +19,7 @@ app.use('/api/auth/login', rateLimit({
   validate: { xForwardedForHeader: false, trustProxy: false }
 }));
 
-// Auto-initialize tables and seed/sync default owner user on startup
+// Auto-initialize tables and seed/sync users from Render Environment Variables on startup
 async function ensureDatabase() {
   try {
     await pool.query(`
@@ -74,24 +74,29 @@ async function ensureDatabase() {
       );
     `);
 
-    // Ensure owner account always exists and password is synced
-    const hashedOwner = await bcrypt.hash('password123', 10);
-    const existingOwner = await pool.query('SELECT id FROM users WHERE username = $1', ['owner']);
-    
-    if (existingOwner.rows.length === 0) {
-      await pool.query(`
-        INSERT INTO users (name, username, password_hash, role)
-        VALUES ('Bar Owner', 'owner', $1, 'owner')
-      `, [hashedOwner]);
-      console.log('Default owner account created successfully.');
+    // Get passwords from Render Environment Variables (or fallback to defaults if not set)
+    const ownerPass = process.env.SEED_OWNER_PASSWORD || 'password123';
+    const barmanPass = process.env.SEED_BARMAN_PASSWORD || 'barman123';
+
+    // Seed or sync Owner
+    const hashedOwner = await bcrypt.hash(ownerPass, 10);
+    const ownerCheck = await pool.query('SELECT id FROM users WHERE username = $1', ['owner']);
+    if (ownerCheck.rows.length === 0) {
+      await pool.query(`INSERT INTO users (name, username, password_hash, role) VALUES ('Bar Owner', 'owner', $1, 'owner')`, [hashedOwner]);
     } else {
-      await pool.query(`
-        UPDATE users SET password_hash = $1 WHERE username = 'owner'
-      `, [hashedOwner]);
-      console.log('Default owner account password synchronized.');
+      await pool.query(`UPDATE users SET password_hash = $1 WHERE username = 'owner'`, [hashedOwner]);
     }
 
-    console.log('Database tables and default owner account ready.');
+    // Seed or sync Barman
+    const hashedBarman = await bcrypt.hash(barmanPass, 10);
+    const barmanCheck = await pool.query('SELECT id FROM users WHERE username = $1', ['barman']);
+    if (barmanCheck.rows.length === 0) {
+      await pool.query(`INSERT INTO users (name, username, password_hash, role) VALUES ('Barman Staff', 'barman', $1, 'barman')`, [hashedBarman]);
+    } else {
+      await pool.query(`UPDATE users SET password_hash = $1 WHERE username = 'barman'`, [hashedBarman]);
+    }
+
+    console.log('Database tables and seed users synchronized successfully.');
   } catch (err) {
     console.error('Failed to initialize database on startup:', err);
   }
