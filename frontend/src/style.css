@@ -107,6 +107,20 @@ button:disabled {
   font-weight: 900;
   letter-spacing: -1px;
   box-shadow: 0 8px 20px rgba(212, 175, 55, 0.3);
+  overflow: hidden;
+}
+
+.brand-logo-img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.loading-overlay .brand-logo-img {
+  width: 64px;
+  height: 64px;
+  animation: drawLogo 1.5s infinite ease-in-out;
 }
 
 .login-card h1, .topbar h1 {
@@ -300,7 +314,7 @@ input:focus, select:focus {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 18px;
   margin-bottom: 22px;
 }
@@ -334,7 +348,7 @@ input:focus, select:focus {
 .metric strong {
   display: block;
   font-family: 'Manrope', sans-serif;
-  font-size: 30px;
+  font-size: 24px;
   margin: 10px 0 4px;
   letter-spacing: -1px;
   color: #0f172a;
@@ -550,6 +564,12 @@ td strong {
   color: white;
   gap: 16px;
   font-weight: 600;
+}
+
+@media(max-width: 1200px) {
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media(max-width: 1050px) {

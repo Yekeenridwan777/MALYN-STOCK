@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
+import logoImg from './img/Golden_House_M_Emblem-removebg-preview.png';
 
 const API = (import.meta.env.VITE_API_URL || 'https://malyn-bar-backend.onrender.com').replace(/\/+$/, '');
 
@@ -147,7 +148,6 @@ function App() {
     }
   }
 
-  // Record or Update Drink Docket (Barman)
   async function recordDocket(e) {
     e.preventDefault();
     await runAction(async () => {
@@ -170,7 +170,6 @@ function App() {
     }, editingDocket ? 'Drink docket updated successfully.' : 'Drink docket recorded successfully and stock updated.');
   }
 
-  // Record or Update Food Docket (Chef)
   async function recordFoodDocket(e) {
     e.preventDefault();
     await runAction(async () => {
@@ -221,7 +220,9 @@ function App() {
     return (
       <main className="login-wrap">
         <form className="login-card" onSubmit={login}>
-          <div className="brand-mark drawing-logo">BC</div>
+          <div className="brand-mark">
+            <img src={logoImg} alt="Hotel Logo" className="brand-logo-img" />
+          </div>
           <p className="eyebrow">BAR OPERATIONS</p>
           <h1>Stock & Kitchen Control</h1>
           <p className="muted">Multi-role bar inventory, kitchen dockets, and waitress settlements.</p>
@@ -238,7 +239,9 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">BC</div>
+          <div className="brand-mark">
+            <img src={logoImg} alt="Hotel Logo" className="brand-logo-img" />
+          </div>
           <div><strong>Malyn Bar</strong><small>{user.role.toUpperCase()} PORTAL</small></div>
         </div>
         <div className="userbox">
@@ -285,7 +288,7 @@ function App() {
 
         {loading && (
           <div className="loading-overlay">
-            <div className="drawing-logo">BC</div>
+            <img src={logoImg} alt="Loading Logo" className="brand-logo-img" />
             <p>Loading records...</p>
           </div>
         )}
@@ -726,6 +729,7 @@ function App() {
             <section className="metric-grid">
               <Metric label="Active Drink Types" value={products.length} note="Beverage catalog" />
               <Metric label="Total Drink Units" value={products.reduce((a,p)=>a+Number(p.quantity),0)} note="Physical stock balance" />
+              <Metric label="Total Active Stock Value" value={currency(report?.stock?.total_stock_value || products.reduce((a,p)=>a+(Number(p.quantity)*Number(p.selling_price)),0))} note="Total worth of bar stock" />
               <Metric label="Low Stock Items" value={lowStockProducts.length} note="Needs restocking" />
               <Metric label="Drink Sales Value" value={currency(report?.drinkSalesToday?.recorded_value)} note="Total recorded sales" />
             </section>
