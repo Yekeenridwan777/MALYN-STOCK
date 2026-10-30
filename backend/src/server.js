@@ -19,8 +19,6 @@ app.use('/api/auth/login', rateLimit({
   validate: { xForwardedForHeader: false, trustProxy: false }
 }));
 
-const BUSINESS_DAY_SQL = `(created_at - INTERVAL '6 hours')::date`;
-
 async function ensureDatabase() {
   try {
     await pool.query(`

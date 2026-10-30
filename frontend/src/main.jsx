@@ -35,10 +35,11 @@ function App() {
   const [editingDocket, setEditingDocket] = useState(null);
   const [editDocketNumber, setEditDocketNumber] = useState('');
 
-  // Chef form states (No waitress required on entry)
+  // Chef form states
   const [foodDocketNum, setFoodDocketNum] = useState('');
   const [foodItemRows, setFoodItemRows] = useState([{ menuItemId: '', quantity: 1 }]);
   const [editingFoodDocket, setEditingFoodDocket] = useState(null);
+  const [editFoodDocketNum, setEditFoodDocketNum] = useState('');
 
   // Owner forms & actions
   const [newProduct, setNewProduct] = useState({ name: '', openingQuantity: 0, lowStockThreshold: 10, sellingPrice: 0 });
@@ -65,7 +66,6 @@ function App() {
     setLoading(true);
     setLoadingError('');
     try {
-      // Safe, independent promises so that minor role fetch restrictions won't crash the entire load pipeline
       const prodRes = await api('/api/products').catch(() => ({ products: [] }));
       setProducts(prodRes.products || []);
 
@@ -147,7 +147,7 @@ function App() {
     }
   }
 
-  // Record Drink Docket (Barman)
+  // Record or Update Drink Docket (Barman)
   async function recordDocket(e) {
     e.preventDefault();
     await runAction(async () => {
@@ -167,10 +167,10 @@ function App() {
         });
       }
       setDocketNumber(''); setSelectedWaitress(''); setItemRows([{ productId: '', quantity: 1 }]);
-    }, editingDocket ? 'Drink docket updated.' : 'Drink docket recorded successfully and stock updated.');
+    }, editingDocket ? 'Drink docket updated successfully.' : 'Drink docket recorded successfully and stock updated.');
   }
 
-  // Record Food Docket (Chef)
+  // Record or Update Food Docket (Chef)
   async function recordFoodDocket(e) {
     e.preventDefault();
     await runAction(async () => {
@@ -180,7 +180,7 @@ function App() {
       if (editingFoodDocket) {
         await api(`/api/food/dockets/${editingFoodDocket.id}/edit`, {
           method: 'PUT',
-          body: JSON.stringify({ items })
+          body: JSON.stringify({ newDocketNumber: editFoodDocketNum, items })
         });
         setEditingFoodDocket(null);
       } else {
@@ -189,11 +189,10 @@ function App() {
           body: JSON.stringify({ docketNumber: foodDocketNum, items })
         });
       }
-      setFoodDocketNum(''); setFoodItemRows([{ menuItemId: '', quantity: 1 }]);
-    }, 'Food docket recorded successfully.');
+      setFoodDocketNum(''); setEditFoodDocketNum(''); setFoodItemRows([{ menuItemId: '', quantity: 1 }]);
+    }, editingFoodDocket ? 'Food docket updated successfully.' : 'Food docket recorded successfully.');
   }
 
-  // Owner-Only Delete Drink Docket
   async function deleteDocket(id) {
     if (!confirm('Are you sure you want to delete this drink docket? Stock will be restored.')) return;
     await runAction(async () => {
@@ -201,7 +200,6 @@ function App() {
     }, 'Drink docket deleted and stock restored.');
   }
 
-  // Owner-Only Delete Food Docket
   async function deleteFoodDocket(id) {
     if (!confirm('Are you sure you want to delete this food docket?')) return;
     await runAction(async () => {
@@ -217,6 +215,7 @@ function App() {
   }
 
   const currency = n => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(n || 0));
+  const lowStockProducts = products.filter(p => p.quantity <= p.low_stock_threshold);
 
   if (!token || !user) {
     return (
@@ -249,7 +248,7 @@ function App() {
         <nav>
           {isOwner && <>
             <button className={tab==='overview'?'nav-item active':'nav-item'} onClick={()=>setTab('overview')}>Overview</button>
-            <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Drink Inventory</button>
+            <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Drink Inventory {lowStockProducts.length > 0 && <span className="pill warning" style={{marginLeft: '6px'}}>{lowStockProducts.length} Low</span>}</button>
             <button className={tab==='menu'?'nav-item active':'nav-item'} onClick={()=>setTab('menu')}>Food Menu & Pricing</button>
             <button className={tab==='dockets'?'nav-item active':'nav-item'} onClick={()=>setTab('dockets')}>Drink Dockets</button>
             <button className={tab==='foodDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('foodDockets')}>Food Dockets</button>
@@ -257,12 +256,12 @@ function App() {
             <button className={tab==='reports'?'nav-item active':'nav-item'} onClick={()=>setTab('reports')}>Financial Reports</button>
           </>}
           {isBarman && <>
-            <button className={tab==='barmanDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('barmanDockets')}>Record Drink Dockets</button>
+            <button className={tab==='barmanDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('barmanDockets')}>Record / Edit Drink Dockets</button>
             <button className={tab==='dockets'?'nav-item active':'nav-item'} onClick={()=>setTab('dockets')}>View Dockets</button>
             <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Drink Stock & Prices</button>
           </>}
           {isChef && <>
-            <button className={tab==='chefDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('chefDockets')}>Kitchen Food Dockets</button>
+            <button className={tab==='chefDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('chefDockets')}>Record / Edit Food Dockets</button>
             <button className={tab==='foodDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('foodDockets')}>View Food Dockets</button>
             <button className={tab==='menu'?'nav-item active':'nav-item'} onClick={()=>setTab('menu')}>Food Menu</button>
           </>}
@@ -303,8 +302,6 @@ function App() {
             
             <section className="panel">
               <h2>My Daily Accounting & Dockets</h2>
-              <p className="muted">Your assigned drink and food dockets. Status updates to <strong>Balanced</strong> once the owner confirms and locks your cash settlement.</p>
-              
               <h3>Drink Dockets</h3>
               <div className="table-wrap">
                 <table>
@@ -346,9 +343,9 @@ function App() {
         {isBarman && tab === 'barmanDockets' && (
           <div className="stack">
             <section className="panel">
-              <h2>Record Drink Docket</h2>
+              <h2>{editingDocket ? `Edit Drink Docket #${editingDocket.docket_number}` : 'Record Drink Docket'}</h2>
               <form className="stack" onSubmit={recordDocket}>
-                <label>Paper Docket Number<input required value={docketNumber} onChange={e=>setDocketNumber(e.target.value)} placeholder="e.g. D101"/></label>
+                <label>Paper Docket Number<input required value={editingDocket ? editDocketNumber : docketNumber} onChange={e=>editingDocket ? setEditDocketNumber(e.target.value) : setDocketNumber(e.target.value)} placeholder="e.g. D101"/></label>
                 <label>Responsible Waitress (Optional)
                   <select value={selectedWaitress} onChange={e=>setSelectedWaitress(e.target.value)}>
                     <option value="">-- Choose Waitress --</option>
@@ -369,7 +366,10 @@ function App() {
                   </div>
                 ))}
                 <button type="button" className="secondary" onClick={()=>setItemRows(old=>[...old,{productId:'',quantity:1}])}>+ Add another drink</button>
-                <button className="primary">Submit Drink Docket & Deduct Stock</button>
+                <div style={{display: 'flex', gap: '10px'}}>
+                  <button className="primary">{editingDocket ? 'Update Drink Docket' : 'Submit Drink Docket & Deduct Stock'}</button>
+                  {editingDocket && <button type="button" className="secondary" onClick={()=>{ setEditingDocket(null); setItemRows([{productId:'', quantity:1}]); }}>Cancel Edit</button>}
+                </div>
               </form>
             </section>
           </div>
@@ -379,9 +379,9 @@ function App() {
         {isChef && tab === 'chefDockets' && (
           <div className="stack">
             <section className="panel">
-              <h2>Record Kitchen Food Docket</h2>
+              <h2>{editingFoodDocket ? `Edit Food Docket #${editingFoodDocket.docket_number}` : 'Record Kitchen Food Docket'}</h2>
               <form className="stack" onSubmit={recordFoodDocket}>
-                <label>Food Docket Number<input required value={foodDocketNum} onChange={e=>setFoodDocketNum(e.target.value)} placeholder="e.g. F201"/></label>
+                <label>Food Docket Number<input required value={editingFoodDocket ? editFoodDocketNum : foodDocketNum} onChange={e=>editingFoodDocket ? setEditFoodDocketNum(e.target.value) : setFoodDocketNum(e.target.value)} placeholder="e.g. F201"/></label>
                 <h3>Food Items Ordered</h3>
                 {foodItemRows.map((row, i) => (
                   <div className="form-grid item-row" key={i}>
@@ -396,7 +396,10 @@ function App() {
                   </div>
                 ))}
                 <button type="button" className="secondary" onClick={()=>setFoodItemRows(old=>[...old,{menuItemId:'',quantity:1}])}>+ Add another food item</button>
-                <button className="primary">Save Food Docket</button>
+                <div style={{display: 'flex', gap: '10px'}}>
+                  <button className="primary">{editingFoodDocket ? 'Update Food Docket' : 'Save Food Docket'}</button>
+                  {editingFoodDocket && <button type="button" className="secondary" onClick={()=>{ setEditingFoodDocket(null); setFoodItemRows([{menuItemId:'', quantity:1}]); }}>Cancel Edit</button>}
+                </div>
               </form>
             </section>
           </div>
@@ -407,8 +410,6 @@ function App() {
           <div className="stack">
             <section className="panel">
               <h2>Waitress Settlements & Daily Breakdown</h2>
-              <p className="muted">Review drink and food totals, individual dockets, and items per waitress. Mark as balanced to lock dockets.</p>
-              
               <div className="stack">
                 {ownerWaitressList.map(w => (
                   <div key={w.id} className="panel" style={{border: '1px solid #e2e8f0', background: '#f8fafc'}}>
@@ -475,7 +476,7 @@ function App() {
               <input className="search" placeholder="Search docket number..." value={search} onChange={e=>setSearch(e.target.value)} />
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th>{isOwner && <th>Action</th>}</tr></thead>
+                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                   <tbody>
                     {dockets.map(d => (
                       <tr key={d.id}>
@@ -484,11 +485,22 @@ function App() {
                         <td>{d.items?.map(i => `${i.productName} (${i.quantity})`).join(', ')}</td>
                         <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Active'}</span></td>
                         <td>{new Date(d.created_at).toLocaleString()}</td>
-                        {isOwner && (
-                          <td>
-                            {!d.settled && <button className="danger small" onClick={()=>deleteDocket(d.id)}>Delete</button>}
-                          </td>
-                        )}
+                        <td>
+                          <div style={{display: 'flex', gap: '6px'}}>
+                            {isBarman && !d.settled && (
+                              <button className="small secondary" onClick={()=>{
+                                setEditingDocket(d);
+                                setEditDocketNumber(d.docket_number);
+                                setSelectedWaitress(d.waitress_id || '');
+                                setItemRows(d.items?.map(it => ({ productId: it.productId, quantity: it.quantity })) || [{productId:'', quantity:1}]);
+                                setTab('barmanDockets');
+                              }}>Edit</button>
+                            )}
+                            {isOwner && !d.settled && (
+                              <button className="danger small" onClick={()=>deleteDocket(d.id)}>Delete</button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -505,7 +517,7 @@ function App() {
               <h2>Food Dockets</h2>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th>{isOwner && <th>Action</th>}</tr></thead>
+                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                   <tbody>
                     {foodDockets.map(d => (
                       <tr key={d.id}>
@@ -514,11 +526,21 @@ function App() {
                         <td>{d.items?.map(i => `${i.itemName} (${i.servingOption}) x${i.quantity}`).join(', ')}</td>
                         <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Active'}</span></td>
                         <td>{new Date(d.created_at).toLocaleString()}</td>
-                        {isOwner && (
-                          <td>
-                            {!d.settled && <button className="danger small" onClick={()=>deleteFoodDocket(d.id)}>Delete</button>}
-                          </td>
-                        )}
+                        <td>
+                          <div style={{display: 'flex', gap: '6px'}}>
+                            {isChef && !d.settled && (
+                              <button className="small secondary" onClick={()=>{
+                                setEditingFoodDocket(d);
+                                setEditFoodDocketNum(d.docket_number);
+                                setFoodItemRows(d.items?.map(it => ({ menuItemId: it.menuItemId, quantity: it.quantity })) || [{menuItemId:'', quantity:1}]);
+                                setTab('chefDockets');
+                              }}>Edit</button>
+                            )}
+                            {isOwner && !d.settled && (
+                              <button className="danger small" onClick={()=>deleteFoodDocket(d.id)}>Delete</button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -528,7 +550,7 @@ function App() {
           </div>
         )}
 
-        {/* OWNER FOOD MENU & PRICING */}
+        {/* FOOD MENU & PRICING */}
         {tab === 'menu' && (
           <div className="stack">
             <section className="panel">
@@ -578,39 +600,58 @@ function App() {
         {/* INVENTORY TAB */}
         {tab === 'inventory' && (
           <div className="stack">
+            {lowStockProducts.length > 0 && (
+              <section className="panel" style={{border: '1px solid #f59e0b', background: '#fffbeb'}}>
+                <h3 style={{color: '#d97706'}}>⚠️ Low Stock Warnings</h3>
+                <p>The following drinks have fallen below or at their low stock threshold:</p>
+                <ul>
+                  {lowStockProducts.map(p => (
+                    <li key={p.id}><strong>{p.name}</strong> - Only <strong>{p.quantity} {p.unit}</strong> remaining (Threshold: {p.low_stock_threshold})</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <section className="panel">
               <h2>Drink Inventory & Stock</h2>
-              <p className="muted">{isOwner ? 'Active drinks, quantities, and owner price controls (Click a price to edit).' : 'Current stock levels and drink prices.'}</p>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Drink</th><th>Unit</th><th>Quantity</th><th>Price (₦)</th><th>Status</th>{isOwner && <th>Actions</th>}</tr></thead>
+                  <thead><tr><th>Drink</th><th>Unit</th><th>Quantity</th><th>Threshold</th><th>Price (₦)</th><th>Status</th>{isOwner && <th>Actions</th>}</tr></thead>
                   <tbody>
-                    {products.map(p => (
-                      <tr key={p.id}>
-                        <td><strong>{p.name}</strong></td>
-                        <td>{p.unit}</td>
-                        <td>{p.quantity}</td>
-                        <td>
-                          {isOwner ? (
-                            <input type="number" defaultValue={p.selling_price} style={{width: '90px'}} onBlur={async e => {
-                              const newPrice = Number(e.target.value);
-                              if (newPrice >= 0 && newPrice !== p.selling_price) {
-                                await runAction(() => api(`/api/products/${p.id}`, { method: 'PUT', body: JSON.stringify({ sellingPrice: newPrice }) }), 'Price updated.');
-                              }
-                            }} />
-                          ) : currency(p.selling_price)}
-                        </td>
-                        <td><span className={p.quantity <= 0 ? 'pill warning' : 'pill good'}>{p.quantity <= 0 ? 'Out of Stock' : 'In Stock'}</span></td>
-                        {isOwner && (
+                    {products.map(p => {
+                      const isLow = p.quantity <= p.low_stock_threshold;
+                      return (
+                        <tr key={p.id}>
+                          <td><strong>{p.name}</strong></td>
+                          <td>{p.unit}</td>
+                          <td>{p.quantity}</td>
+                          <td>{p.low_stock_threshold}</td>
                           <td>
-                            <button className="danger small" onClick={async () => {
-                              if (!confirm(`Delete ${p.name}?`)) return;
-                              await runAction(() => api(`/api/products/${p.id}`, { method: 'DELETE' }), 'Drink removed.');
-                            }}>Delete</button>
+                            {isOwner ? (
+                              <input type="number" defaultValue={p.selling_price} style={{width: '90px'}} onBlur={async e => {
+                                const newPrice = Number(e.target.value);
+                                if (newPrice >= 0 && newPrice !== p.selling_price) {
+                                  await runAction(() => api(`/api/products/${p.id}`, { method: 'PUT', body: JSON.stringify({ sellingPrice: newPrice }) }), 'Price updated.');
+                                }
+                              }} />
+                            ) : currency(p.selling_price)}
                           </td>
-                        )}
-                      </tr>
-                    ))}
+                          <td>
+                            <span className={isLow ? 'pill warning' : 'pill good'}>
+                              {p.quantity <= 0 ? 'Out of Stock' : (isLow ? 'Low Stock' : 'In Stock')}
+                            </span>
+                          </td>
+                          {isOwner && (
+                            <td>
+                              <button className="danger small" onClick={async () => {
+                                if (!confirm(`Delete ${p.name}?`)) return;
+                                await runAction(() => api(`/api/products/${p.id}`, { method: 'DELETE' }), 'Drink removed.');
+                              }}>Delete</button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -685,8 +726,8 @@ function App() {
             <section className="metric-grid">
               <Metric label="Active Drink Types" value={products.length} note="Beverage catalog" />
               <Metric label="Total Drink Units" value={products.reduce((a,p)=>a+Number(p.quantity),0)} note="Physical stock balance" />
-              <Metric label="Drink Sales Value" value={currency(report?.drinkSalesToday?.recorded_value)} note="Total recorded drink sales" />
-              <Metric label="Food Sales Value" value={currency(report?.foodSalesToday?.recorded_value)} note="Total recorded food sales" />
+              <Metric label="Low Stock Items" value={lowStockProducts.length} note="Needs restocking" />
+              <Metric label="Drink Sales Value" value={currency(report?.drinkSalesToday?.recorded_value)} note="Total recorded sales" />
             </section>
           </div>
         )}
