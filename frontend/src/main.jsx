@@ -40,9 +40,11 @@ function App() {
   const [foodItemRows, setFoodItemRows] = useState([{ menuItemId: '', quantity: 1 }]);
   const [editingFoodDocket, setEditingFoodDocket] = useState(null);
 
-  // Owner forms
+  // Owner forms & actions
   const [newProduct, setNewProduct] = useState({ name: '', openingQuantity: 0, lowStockThreshold: 10, sellingPrice: 0 });
   const [newMenuItem, setNewMenuItem] = useState({ name: '', servingOption: 'Regular', price: 0 });
+  const [receive, setReceive] = useState({ productId: '', quantity: 1, reference: '' });
+  const [adjust, setAdjust] = useState({ productId: '', quantityChange: -1, reason: '' });
 
   const isOwner = user?.role === 'owner';
   const isBarman = user?.role === 'barman';
@@ -527,7 +529,7 @@ function App() {
               <h2>Food Menu & Pricing Options</h2>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Food Item</th><th>Serving Option</th><th>Price (₦)</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Food Item</th><th>Serving Option</th><th>Price (₦)</th><th>Status</th>{isOwner && <th>Action</th>}</tr></thead>
                   <tbody>
                     {foodMenu.map(m => (
                       <tr key={m.id}>
@@ -535,6 +537,14 @@ function App() {
                         <td>{m.serving_option}</td>
                         <td>{currency(m.price)}</td>
                         <td><span className="pill good">Active</span></td>
+                        {isOwner && (
+                          <td>
+                            <button className="danger small" onClick={async () => {
+                              if (!confirm('Delete this menu item?')) return;
+                              await runAction(() => api(`/api/food/menu/${m.id}`, { method: 'PUT', body: JSON.stringify({ active: false }) }), 'Menu item removed.');
+                            }}>Delete</button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -566,21 +576,81 @@ function App() {
               <h2>Drink Inventory & Stock</h2>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Drink</th><th>Unit</th><th>Quantity</th><th>Price</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Drink</th><th>Unit</th><th>Quantity</th><th>Price (₦)</th><th>Status</th>{isOwner && <th>Actions</th>}</tr></thead>
                   <tbody>
                     {products.map(p => (
                       <tr key={p.id}>
                         <td><strong>{p.name}</strong></td>
                         <td>{p.unit}</td>
                         <td>{p.quantity}</td>
-                        <td>{currency(p.selling_price)}</td>
+                        <td>
+                          {isOwner ? (
+                            <input type="number" defaultValue={p.selling_price} style={{width: '90px'}} onBlur={async e => {
+                              const newPrice = Number(e.target.value);
+                              if (newPrice >= 0 && newPrice !== p.selling_price) {
+                                await runAction(() => api(`/api/products/${p.id}`, { method: 'PUT', body: JSON.stringify({ sellingPrice: newPrice }) }), 'Price updated.');
+                              }
+                            }} />
+                          ) : currency(p.selling_price)}
+                        </td>
                         <td><span className={p.quantity <= 0 ? 'pill warning' : 'pill good'}>{p.quantity <= 0 ? 'Out of Stock' : 'In Stock'}</span></td>
+                        {isOwner && (
+                          <td>
+                            <button className="danger small" onClick={async () => {
+                              if (!confirm(`Delete ${p.name}?`)) return;
+                              await runAction(() => api(`/api/products/${p.id}`, { method: 'DELETE' }), 'Drink removed.');
+                            }}>Delete</button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </section>
+
+            {isOwner && (
+              <div className="grid-2">
+                <section className="panel">
+                  <h2>Receive New Stock</h2>
+                  <form className="stack" onSubmit={async e => {
+                    e.preventDefault();
+                    await runAction(() => api('/api/stock/receive', { method: 'POST', body: JSON.stringify(receive) }), 'Stock received.');
+                    setReceive({ productId: '', quantity: 1, reference: '' });
+                  }}>
+                    <label>Drink
+                      <select required value={receive.productId} onChange={e=>setReceive({...receive, productId:e.target.value})}>
+                        <option value="">Select drink</option>
+                        {products.map(p => <option key={p.id} value={p.id}>{p.name} (Current: {p.quantity})</option>)}
+                      </select>
+                    </label>
+                    <label>Quantity Received<input type="number" min="1" required value={receive.quantity} onChange={e=>setReceive({...receive, quantity:Number(e.target.value)})}/></label>
+                    <label>Reference / Supplier<input value={receive.reference} onChange={e=>setReceive({...receive, reference:e.target.value})} placeholder="e.g. Supplier delivery"/></label>
+                    <button className="primary">Receive Stock</button>
+                  </form>
+                </section>
+
+                <section className="panel">
+                  <h2>Stock Adjustment / Breakage</h2>
+                  <form className="stack" onSubmit={async e => {
+                    e.preventDefault();
+                    await runAction(() => api('/api/stock/adjust', { method: 'POST', body: JSON.stringify(adjust) }), 'Stock adjusted.');
+                    setAdjust({ productId: '', quantityChange: -1, reason: '' });
+                  }}>
+                    <label>Drink
+                      <select required value={adjust.productId} onChange={e=>setAdjust({...adjust, productId:e.target.value})}>
+                        <option value="">Select drink</option>
+                        {products.map(p => <option key={p.id} value={p.id}>{p.name} (Stock: {p.quantity})</option>)}
+                      </select>
+                    </label>
+                    <label>Quantity Change (+/-)<input type="number" required value={adjust.quantityChange} onChange={e=>setAdjust({...adjust, quantityChange:Number(e.target.value)})}/></label>
+                    <label>Reason<input required value={adjust.reason} onChange={e=>setAdjust({...adjust, reason:e.target.value})} placeholder="e.g. Breakage / Audit correction"/></label>
+                    <button className="primary">Apply Adjustment</button>
+                  </form>
+                </section>
+              </div>
+            )}
+
             {isOwner && (
               <section className="panel">
                 <h2>Add New Drink</h2>
