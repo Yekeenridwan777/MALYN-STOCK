@@ -65,32 +65,36 @@ function App() {
     setLoading(true);
     setLoadingError('');
     try {
-      const promises = [
-        api('/api/products').then(p => setProducts(p.products || [])),
-        api('/api/food/menu').then(m => setFoodMenu(m.menu || []))
-      ];
+      // Safe, independent promises so that minor role fetch restrictions won't crash the entire load pipeline
+      const prodRes = await api('/api/products').catch(() => ({ products: [] }));
+      setProducts(prodRes.products || []);
+
+      const menuRes = await api('/api/food/menu').catch(() => ({ menu: [] }));
+      setFoodMenu(menuRes.menu || []);
 
       if (isOwner || isBarman || isChef) {
-        promises.push(
-          api('/api/waitresses').then(w => setWaitresses(w.waitresses || [])),
-          api(`/api/dockets?search=${encodeURIComponent(search)}`).then(d => setDockets(d.dockets || [])),
-          api(`/api/food/dockets?search=${encodeURIComponent(search)}`).then(fd => setFoodDockets(fd.dockets || []))
-        );
+        const waitRes = await api('/api/waitresses').catch(() => ({ waitresses: [] }));
+        setWaitresses(waitRes.waitresses || []);
+
+        const dockRes = await api(`/api/dockets?search=${encodeURIComponent(search)}`).catch(() => ({ dockets: [] }));
+        setDockets(dockRes.dockets || []);
+
+        const foodDockRes = await api(`/api/food/dockets?search=${encodeURIComponent(search)}`).catch(() => ({ dockets: [] }));
+        setFoodDockets(foodDockRes.dockets || []);
       }
 
       if (isOwner) {
-        promises.push(
-          api('/api/reports/summary').then(r => setReport(r)),
-          api('/api/owner/waitress-accounting').then(ow => setOwnerWaitressList(ow.waitresses || []))
-        );
-      }
-      if (isWaitress) {
-        promises.push(
-          api('/api/waitress/my-accounting').then(wa => setWaitressAccounting(wa))
-        );
-      }
+        const repRes = await api('/api/reports/summary').catch(() => null);
+        setReport(repRes);
 
-      await Promise.all(promises);
+        const owRes = await api('/api/owner/waitress-accounting').catch(() => ({ waitresses: [] }));
+        setOwnerWaitressList(owRes.waitresses || []);
+      }
+      
+      if (isWaitress) {
+        const waRes = await api('/api/waitress/my-accounting').catch(() => null);
+        setWaitressAccounting(waRes);
+      }
     } catch (e) {
       setLoadingError(e.message);
     } finally {
@@ -112,9 +116,16 @@ function App() {
       localStorage.setItem('bar_user', JSON.stringify(data.user));
       setToken(data.token);
       setUser(data.user);
+      
+      if (data.user.role === 'barman') setTab('barmanDockets');
+      else if (data.user.role === 'chef') setTab('chefDockets');
+      else if (data.user.role === 'waitress') setTab('myAccounting');
+      else setTab('overview');
+
       setNotice('Signed in successfully.');
     } catch (e) {
       setError(e.message);
+    } finally {
       setLoading(false);
     }
   }
@@ -156,10 +167,10 @@ function App() {
         });
       }
       setDocketNumber(''); setSelectedWaitress(''); setItemRows([{ productId: '', quantity: 1 }]);
-    }, editingDocket ? 'Drink docket updated.' : 'Drink docket recorded successfully.');
+    }, editingDocket ? 'Drink docket updated.' : 'Drink docket recorded successfully and stock updated.');
   }
 
-  // Record Food Docket (Chef - No waitress required on entry)
+  // Record Food Docket (Chef)
   async function recordFoodDocket(e) {
     e.preventDefault();
     await runAction(async () => {
@@ -187,7 +198,7 @@ function App() {
     if (!confirm('Are you sure you want to delete this drink docket? Stock will be restored.')) return;
     await runAction(async () => {
       await api(`/api/dockets/${id}`, { method: 'DELETE' });
-    }, 'Drink docket deleted.');
+    }, 'Drink docket deleted and stock restored.');
   }
 
   // Owner-Only Delete Food Docket
@@ -206,17 +217,6 @@ function App() {
   }
 
   const currency = n => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(n || 0));
-
-  if (loading && !user) {
-    return (
-      <main className="login-wrap">
-        <div className="loading-container" style={{textAlign: 'center'}}>
-          <div className="drawing-logo">BC</div>
-          <h2 style={{color: '#fff', marginTop: '16px'}}>Loading Malyn Bar...</h2>
-        </div>
-      </main>
-    );
-  }
 
   if (!token || !user) {
     return (
@@ -259,7 +259,7 @@ function App() {
           {isBarman && <>
             <button className={tab==='barmanDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('barmanDockets')}>Record Drink Dockets</button>
             <button className={tab==='dockets'?'nav-item active':'nav-item'} onClick={()=>setTab('dockets')}>View Dockets</button>
-            <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Drink Stock</button>
+            <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Drink Stock & Prices</button>
           </>}
           {isChef && <>
             <button className={tab==='chefDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('chefDockets')}>Kitchen Food Dockets</button>
