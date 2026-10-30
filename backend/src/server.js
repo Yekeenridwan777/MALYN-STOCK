@@ -47,18 +47,21 @@ async function ensureDatabase() {
         active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
       CREATE TABLE IF NOT EXISTS dockets (
         id SERIAL PRIMARY KEY,
         docket_number TEXT UNIQUE NOT NULL,
         waitress_id INTEGER REFERENCES users(id),
         created_by INTEGER NOT NULL REFERENCES users(id),
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','issued','cancelled')),
-        settled BOOLEAN NOT NULL DEFAULT FALSE,
-        settled_by INTEGER REFERENCES users(id),
-        settled_at TIMESTAMPTZ,
         notes TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE dockets ADD COLUMN IF NOT EXISTS settled BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE dockets ADD COLUMN IF NOT EXISTS settled_by INTEGER REFERENCES users(id);
+      ALTER TABLE dockets ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+
       CREATE TABLE IF NOT EXISTS docket_items (
         id SERIAL PRIMARY KEY,
         docket_id INTEGER NOT NULL REFERENCES dockets(id) ON DELETE CASCADE,
@@ -66,6 +69,7 @@ async function ensureDatabase() {
         quantity INTEGER NOT NULL CHECK (quantity > 0),
         unit_price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0)
       );
+
       CREATE TABLE IF NOT EXISTS stock_movements (
         id SERIAL PRIMARY KEY,
         product_id INTEGER NOT NULL REFERENCES products(id),
@@ -78,6 +82,7 @@ async function ensureDatabase() {
         performed_by INTEGER NOT NULL REFERENCES users(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
       CREATE TABLE IF NOT EXISTS food_menu (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
@@ -87,17 +92,20 @@ async function ensureDatabase() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(name, serving_option)
       );
+
       CREATE TABLE IF NOT EXISTS food_dockets (
         id SERIAL PRIMARY KEY,
         docket_number TEXT UNIQUE NOT NULL,
         waitress_id INTEGER REFERENCES users(id),
         created_by INTEGER NOT NULL REFERENCES users(id),
         status TEXT NOT NULL DEFAULT 'issued' CHECK (status IN ('pending','issued','cancelled')),
-        settled BOOLEAN NOT NULL DEFAULT FALSE,
-        settled_by INTEGER REFERENCES users(id),
-        settled_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE food_dockets ADD COLUMN IF NOT EXISTS settled BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE food_dockets ADD COLUMN IF NOT EXISTS settled_by INTEGER REFERENCES users(id);
+      ALTER TABLE food_dockets ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+
       CREATE TABLE IF NOT EXISTS food_docket_items (
         id SERIAL PRIMARY KEY,
         food_docket_id INTEGER NOT NULL REFERENCES food_dockets(id) ON DELETE CASCADE,
