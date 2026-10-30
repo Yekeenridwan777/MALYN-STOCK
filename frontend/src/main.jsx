@@ -35,17 +35,14 @@ function App() {
   const [editingDocket, setEditingDocket] = useState(null);
   const [editDocketNumber, setEditDocketNumber] = useState('');
 
-  // Chef form states
+  // Chef form states (No waitress required on entry)
   const [foodDocketNum, setFoodDocketNum] = useState('');
-  const [foodWaitressId, setFoodWaitressId] = useState('');
   const [foodItemRows, setFoodItemRows] = useState([{ menuItemId: '', quantity: 1 }]);
   const [editingFoodDocket, setEditingFoodDocket] = useState(null);
 
   // Owner forms
   const [newProduct, setNewProduct] = useState({ name: '', openingQuantity: 0, lowStockThreshold: 10, sellingPrice: 0 });
   const [newMenuItem, setNewMenuItem] = useState({ name: '', servingOption: 'Regular', price: 0 });
-  const [receive, setReceive] = useState({ productId: '', quantity: 1, reference: '' });
-  const [adjust, setAdjust] = useState({ productId: '', quantityChange: -1, reason: '' });
 
   const isOwner = user?.role === 'owner';
   const isBarman = user?.role === 'barman';
@@ -138,58 +135,71 @@ function App() {
     await runAction(async () => {
       const items = itemRows.filter(x => x.productId && Number(x.quantity) > 0).map(x => ({ productId: Number(x.productId), quantity: Number(x.quantity) }));
       if (!items.length) throw new Error('Add at least one drink.');
-      if (!selectedWaitress) throw new Error('Select a responsible waitress.');
 
       if (editingDocket) {
         await api(`/api/dockets/${editingDocket.id}/edit`, {
           method: 'PUT',
-          body: JSON.stringify({ newDocketNumber: editDocketNumber, waitressId: Number(selectedWaitress), items })
+          body: JSON.stringify({ newDocketNumber: editDocketNumber, waitressId: selectedWaitress ? Number(selectedWaitress) : null, items })
         });
         setEditingDocket(null);
       } else {
         await api('/api/dockets/barman', {
           method: 'POST',
-          body: JSON.stringify({ docketNumber, waitressId: Number(selectedWaitress), items })
+          body: JSON.stringify({ docketNumber, waitressId: selectedWaitress ? Number(selectedWaitress) : null, items })
         });
       }
       setDocketNumber(''); setSelectedWaitress(''); setItemRows([{ productId: '', quantity: 1 }]);
     }, editingDocket ? 'Drink docket updated.' : 'Drink docket recorded successfully.');
   }
 
-  // Record Food Docket (Chef)
+  // Record Food Docket (Chef - No waitress required on entry)
   async function recordFoodDocket(e) {
     e.preventDefault();
     await runAction(async () => {
       const items = foodItemRows.filter(x => x.menuItemId && Number(x.quantity) > 0).map(x => ({ menuItemId: Number(x.menuItemId), quantity: Number(x.quantity) }));
       if (!items.length) throw new Error('Add at least one food item.');
-      if (!foodWaitressId) throw new Error('Select a responsible waitress.');
 
       if (editingFoodDocket) {
         await api(`/api/food/dockets/${editingFoodDocket.id}/edit`, {
           method: 'PUT',
-          body: JSON.stringify({ waitressId: Number(foodWaitressId), items })
+          body: JSON.stringify({ items })
         });
         setEditingFoodDocket(null);
       } else {
         await api('/api/food/dockets', {
           method: 'POST',
-          body: JSON.stringify({ docketNumber: foodDocketNum, waitressId: Number(foodWaitressId), items })
+          body: JSON.stringify({ docketNumber: foodDocketNum, items })
         });
       }
-      setFoodDocketNum(''); setFoodWaitressId(''); setFoodItemRows([{ menuItemId: '', quantity: 1 }]);
+      setFoodDocketNum(''); setFoodItemRows([{ menuItemId: '', quantity: 1 }]);
     }, 'Food docket recorded successfully.');
   }
 
+  // Owner-Only Delete Drink Docket
+  async function deleteDocket(id) {
+    if (!confirm('Are you sure you want to delete this drink docket? Stock will be restored.')) return;
+    await runAction(async () => {
+      await api(`/api/dockets/${id}`, { method: 'DELETE' });
+    }, 'Drink docket deleted.');
+  }
+
+  // Owner-Only Delete Food Docket
+  async function deleteFoodDocket(id) {
+    if (!confirm('Are you sure you want to delete this food docket?')) return;
+    await runAction(async () => {
+      await api(`/api/food/dockets/${id}`, { method: 'DELETE' });
+    }, 'Food docket deleted.');
+  }
+
   async function settleWaitress(waitressId) {
-    if (!confirm('Mark all open dockets for this waitress as settled?')) return;
+    if (!confirm('Mark all accounting for this waitress as balanced and lock dockets?')) return;
     await runAction(async () => {
       await api(`/api/owner/settle-waitress/${waitressId}`, { method: 'POST' });
-    }, 'Waitress accounting successfully settled and dockets locked.');
+    }, 'Waitress accounting marked as balanced and dockets locked.');
   }
 
   const currency = n => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(n || 0));
 
-  // --- LOADING SCREEN WITH SELF-DRAWING LOGO ANIMATION ---
   if (loading && !user) {
     return (
       <main className="login-wrap">
@@ -241,11 +251,13 @@ function App() {
           </>}
           {isBarman && <>
             <button className={tab==='barmanDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('barmanDockets')}>Record Drink Dockets</button>
+            <button className={tab==='dockets'?'nav-item active':'nav-item'} onClick={()=>setTab('dockets')}>View Dockets</button>
             <button className={tab==='inventory'?'nav-item active':'nav-item'} onClick={()=>setTab('inventory')}>Drink Stock</button>
           </>}
           {isChef && <>
             <button className={tab==='chefDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('chefDockets')}>Kitchen Food Dockets</button>
-            <button className={tab==='menu'?'nav-item active':'nav-item'} onClick={()=>setTab('menu')}>View Food Menu</button>
+            <button className={tab==='foodDockets'?'nav-item active':'nav-item'} onClick={()=>setTab('foodDockets')}>View Food Dockets</button>
+            <button className={tab==='menu'?'nav-item active':'nav-item'} onClick={()=>setTab('menu')}>Food Menu</button>
           </>}
           {isWaitress && <>
             <button className={tab==='myAccounting'?'nav-item active':'nav-item'} onClick={()=>setTab('myAccounting')}>My Sales & Totals</button>
@@ -294,7 +306,7 @@ function App() {
                       <tr key={d.id}>
                         <td><strong>{d.docket_number}</strong></td>
                         <td>{currency(d.total_amount)}</td>
-                        <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Settled' : 'Awaiting Settlement'}</span></td>
+                        <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Awaiting Settlement'}</span></td>
                         <td>{new Date(d.created_at).toLocaleString()}</td>
                       </tr>
                     ))}
@@ -311,7 +323,7 @@ function App() {
                       <tr key={d.id}>
                         <td><strong>{d.docket_number}</strong></td>
                         <td>{currency(d.total_amount)}</td>
-                        <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Settled' : 'Awaiting Settlement'}</span></td>
+                        <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Awaiting Settlement'}</span></td>
                         <td>{new Date(d.created_at).toLocaleString()}</td>
                       </tr>
                     ))}
@@ -329,8 +341,8 @@ function App() {
               <h2>Record Drink Docket</h2>
               <form className="stack" onSubmit={recordDocket}>
                 <label>Paper Docket Number<input required value={docketNumber} onChange={e=>setDocketNumber(e.target.value)} placeholder="e.g. D101"/></label>
-                <label>Responsible Waitress
-                  <select required value={selectedWaitress} onChange={e=>setSelectedWaitress(e.target.value)}>
+                <label>Responsible Waitress (Optional)
+                  <select value={selectedWaitress} onChange={e=>setSelectedWaitress(e.target.value)}>
                     <option value="">Select waitress</option>
                     {waitresses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
@@ -362,12 +374,6 @@ function App() {
               <h2>Record Kitchen Food Docket</h2>
               <form className="stack" onSubmit={recordFoodDocket}>
                 <label>Food Docket Number<input required value={foodDocketNum} onChange={e=>setFoodDocketNum(e.target.value)} placeholder="e.g. F201"/></label>
-                <label>Responsible Waitress
-                  <select required value={foodWaitressId} onChange={e=>setFoodWaitressId(e.target.value)}>
-                    <option value="">Select waitress</option>
-                    {waitresses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                  </select>
-                </label>
                 <h3>Food Items Ordered</h3>
                 {foodItemRows.map((row, i) => (
                   <div className="form-grid item-row" key={i}>
@@ -388,31 +394,123 @@ function App() {
           </div>
         )}
 
-        {/* OWNER WAITRESS SETTLEMENT PORTAL */}
+        {/* OWNER WAITRESS SETTLEMENTS & BREAKDOWN */}
         {isOwner && tab === 'waitressAccounting' && (
           <div className="stack">
             <section className="panel">
-              <h2>Waitress Accounting & Settlements</h2>
-              <p className="muted">Review drink and food totals per waitress. Settle accounting to lock dockets.</p>
+              <h2>Waitress Settlements & Daily Breakdown</h2>
+              <p className="muted">Review drink and food totals, individual dockets, and items per waitress. Mark as balanced to lock dockets.</p>
+              
+              <div className="stack">
+                {ownerWaitressList.map(w => (
+                  <div key={w.id} className="panel" style={{border: '1px solid #e2e8f0', background: '#f8fafc'}}>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                      <div>
+                        <h3>{w.name}</h3>
+                        <p className="muted">Drink Total: {currency(w.drinkTotal)} | Food Total: {currency(w.foodTotal)} | <strong>Combined: {currency(w.combinedTotal)}</strong></p>
+                      </div>
+                      <div>
+                        <span className={w.status === 'Balanced' ? 'pill good' : 'pill warning'}>{w.status}</span>
+                        {w.status !== 'Balanced' && w.combinedTotal > 0 && (
+                          <button className="small primary" style={{marginLeft: '10px'}} onClick={()=>settleWaitress(w.id)}>Mark as Balanced & Lock</button>
+                        )}
+                      </div>
+                    </div>
+
+                    <h4>Drink Dockets</h4>
+                    <div className="table-wrap">
+                      <table>
+                        <thead><tr><th>Docket #</th><th>Items</th><th>Total</th><th>Status</th><th>Time</th></tr></thead>
+                        <tbody>
+                          {w.drinkDockets.map(d => (
+                            <tr key={d.id}>
+                              <td><strong>{d.docket_number}</strong></td>
+                              <td>{d.items?.map(it => `${it.productName} (${it.quantity})`).join(', ')}</td>
+                              <td>{currency(d.total_amount)}</td>
+                              <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Open'}</span></td>
+                              <td>{new Date(d.created_at).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <h4 style={{marginTop: '12px'}}>Food Dockets</h4>
+                    <div className="table-wrap">
+                      <table>
+                        <thead><tr><th>Docket #</th><th>Items</th><th>Total</th><th>Status</th><th>Time</th></tr></thead>
+                        <tbody>
+                          {w.foodDockets.map(d => (
+                            <tr key={d.id}>
+                              <td><strong>{d.docket_number}</strong></td>
+                              <td>{d.items?.map(it => `${it.itemName} (${it.servingOption}) x${it.quantity}`).join(', ')}</td>
+                              <td>{currency(d.total_amount)}</td>
+                              <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Open'}</span></td>
+                              <td>{new Date(d.created_at).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* DOCKETS LIST VIEW (Owner / Barman) */}
+        {tab === 'dockets' && (
+          <div className="stack">
+            <section className="panel">
+              <h2>Drink Dockets (Including Last Week)</h2>
+              <input className="search" placeholder="Search docket number..." value={search} onChange={e=>setSearch(e.target.value)} />
               <div className="table-wrap">
                 <table>
-                  <thead>
-                    <tr><th>Waitress</th><th>Drink Total</th><th>Food Total</th><th>Combined Total</th><th>Status</th><th>Action</th></tr>
-                  </thead>
+                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th>{isOwner && <th>Action</th>}</tr></thead>
                   <tbody>
-                    {ownerWaitressList.map(w => (
-                      <tr key={w.id}>
-                        <td><strong>{w.name}</strong></td>
-                        <td>{currency(w.drinkTotal)}</td>
-                        <td>{currency(w.foodTotal)}</td>
-                        <td><strong>{currency(w.combinedTotal)}</strong></td>
-                        <td><span className={w.status === 'Settled' ? 'pill good' : 'pill warning'}>{w.status}</span></td>
-                        <td>
-                          {w.status !== 'Settled' && w.combinedTotal > 0 && (
-                            <button className="small primary" onClick={()=>settleWaitress(w.id)}>Settle & Lock Dockets</button>
-                          )}
-                          {w.status === 'Settled' && <span className="muted">Settled</span>}
-                        </td>
+                    {dockets.map(d => (
+                      <tr key={d.id}>
+                        <td><strong>{d.docket_number}</strong></td>
+                        <td>{d.waitress_name || 'Unassigned'}</td>
+                        <td>{d.items?.map(i => `${i.productName} (${i.quantity})`).join(', ')}</td>
+                        <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Active'}</span></td>
+                        <td>{new Date(d.created_at).toLocaleString()}</td>
+                        {isOwner && (
+                          <td>
+                            {!d.settled && <button className="danger small" onClick={()=>deleteDocket(d.id)}>Delete</button>}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* FOOD DOCKETS LIST VIEW */}
+        {tab === 'foodDockets' && (
+          <div className="stack">
+            <section className="panel">
+              <h2>Food Dockets</h2>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th>{isOwner && <th>Action</th>}</tr></thead>
+                  <tbody>
+                    {foodDockets.map(d => (
+                      <tr key={d.id}>
+                        <td><strong>{d.docket_number}</strong></td>
+                        <td>{d.waitress_name || 'Unassigned'}</td>
+                        <td>{d.items?.map(i => `${i.itemName} (${i.servingOption}) x${i.quantity}`).join(', ')}</td>
+                        <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Active'}</span></td>
+                        <td>{new Date(d.created_at).toLocaleString()}</td>
+                        {isOwner && (
+                          <td>
+                            {!d.settled && <button className="danger small" onClick={()=>deleteFoodDocket(d.id)}>Delete</button>}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -451,7 +549,7 @@ function App() {
                   await runAction(()=>api('/api/food/menu', {method:'POST', body: JSON.stringify(newMenuItem)}), 'Food menu item added.');
                   setNewMenuItem({name:'', servingOption:'Regular', price:0});
                 }}>
-                  <label>Food Item Name<input required value={newMenuItem.name} onChange={e=>setNewMenuItem({...newMenuItem, name:e.target.value})} placeholder="e.g. Noodles"/></label>
+                  <label>Food Item Name<input required value={newMenuItem.name} onChange={e=>setNewMenuItem({...newMenuItem, name:e.target.value})} placeholder="e.g. Jollof Rice"/></label>
                   <label>Serving Option<input required value={newMenuItem.servingOption} onChange={e=>setNewMenuItem({...newMenuItem, servingOption:e.target.value})} placeholder="e.g. Takeaway / Regular"/></label>
                   <label>Price (₦)<input type="number" min="0" required value={newMenuItem.price} onChange={e=>setNewMenuItem({...newMenuItem, price:Number(e.target.value)})}/></label>
                   <button className="primary">Add Food Menu Item</button>
