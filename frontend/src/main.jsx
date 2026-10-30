@@ -344,7 +344,7 @@ function App() {
                         {products.map(p => <option key={p.id} value={p.id}>{p.name} (Stock: {p.quantity}) - ₦{p.selling_price}</option>)}
                       </select>
                     </label>
-                    <label>Quantity<input type="number" min="1" required value={row.quantity} onChange={e=>setItemRows(old=>old.map((x,j)=>j===i?{...x,quantity:Number(e.target.value)}:x))/></label>
+                    <label>Quantity<input type="number" min="1" required value={row.quantity} onChange={e=>setItemRows(old=>old.map((x,j)=>j===i?{...x,quantity:Number(e.target.value)}:x))}/></label>
                     {itemRows.length>1 && <button type="button" className="danger" onClick={()=>setItemRows(old=>old.filter((_,j)=>j!==i))}>Remove</button>}
                   </div>
                 ))}
@@ -377,7 +377,7 @@ function App() {
                         {foodMenu.map(m => <option key={m.id} value={m.id}>{m.name} ({m.serving_option}) - ₦{m.price}</option>)}
                       </select>
                     </label>
-                    <label>Quantity<input type="number" min="1" required value={row.quantity} onChange={e=>setFoodItemRows(old=>old.map((x,j)=>j===i?{...x,quantity:Number(e.target.value)}:x))/></label>
+                    <label>Quantity<input type="number" min="1" required value={row.quantity} onChange={e=>setFoodItemRows(old=>old.map((x,j)=>j===i?{...x,quantity:Number(e.target.value)}:x))}/></label>
                     {foodItemRows.length>1 && <button type="button" className="danger" onClick={()=>setFoodItemRows(old=>old.filter((_,j)=>j!==i))}>Remove</button>}
                   </div>
                 ))}
