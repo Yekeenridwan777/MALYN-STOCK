@@ -19,7 +19,9 @@ app.use('/api/auth/login', rateLimit({
   validate: { xForwardedForHeader: false, trustProxy: false }
 }));
 
-// Auto-initialize tables and seed/sync users from Render Environment Variables on startup
+// Business-day SQL helper (6:00 AM rule: business day starts at 06:00:00 and ends next day at 05:59:59)
+const BUSINESS_DAY_SQL = `(created_at - INTERVAL '6 hours')::date`;
+
 async function ensureDatabase() {
   try {
     await pool.query(`
@@ -28,7 +30,7 @@ async function ensureDatabase() {
         name TEXT NOT NULL,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('owner','barman','waitress')),
+        role TEXT NOT NULL CHECK (role IN ('owner','barman','waitress','chef')),
         active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -48,10 +50,11 @@ async function ensureDatabase() {
         waitress_id INTEGER NOT NULL REFERENCES users(id),
         created_by INTEGER NOT NULL REFERENCES users(id),
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','issued','cancelled')),
+        settled BOOLEAN NOT NULL DEFAULT FALSE,
+        settled_by INTEGER REFERENCES users(id),
+        settled_at TIMESTAMPTZ,
         notes TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        issued_by INTEGER REFERENCES users(id),
-        issued_at TIMESTAMPTZ
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS docket_items (
         id SERIAL PRIMARY KEY,
@@ -72,37 +75,65 @@ async function ensureDatabase() {
         performed_by INTEGER NOT NULL REFERENCES users(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS food_menu (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        serving_option TEXT NOT NULL DEFAULT 'Regular',
+        price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(name, serving_option)
+      );
+      CREATE TABLE IF NOT EXISTS food_dockets (
+        id SERIAL PRIMARY KEY,
+        docket_number TEXT UNIQUE NOT NULL,
+        waitress_id INTEGER NOT NULL REFERENCES users(id),
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        status TEXT NOT NULL DEFAULT 'issued' CHECK (status IN ('pending','issued','cancelled')),
+        settled BOOLEAN NOT NULL DEFAULT FALSE,
+        settled_by INTEGER REFERENCES users(id),
+        settled_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS food_docket_items (
+        id SERIAL PRIMARY KEY,
+        food_docket_id INTEGER NOT NULL REFERENCES food_dockets(id) ON DELETE CASCADE,
+        menu_item_id INTEGER NOT NULL REFERENCES food_menu(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        unit_price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0)
+      );
     `);
 
-    // Get passwords from Render Environment Variables (or fallback to defaults if not set)
+    // Seed default users from environment or secure defaults
     const ownerPass = process.env.SEED_OWNER_PASSWORD || 'password123';
     const barmanPass = process.env.SEED_BARMAN_PASSWORD || 'barman123';
+    const chefPass = process.env.SEED_CHEF_PASSWORD || 'chef123';
+    const waitressPass = process.env.SEED_WAITRESS_PASSWORD || 'waitress123';
 
-    // Seed or sync Owner
-    const hashedOwner = await bcrypt.hash(ownerPass, 10);
-    const ownerCheck = await pool.query('SELECT id FROM users WHERE username = $1', ['owner']);
-    if (ownerCheck.rows.length === 0) {
-      await pool.query(`INSERT INTO users (name, username, password_hash, role) VALUES ('Bar Owner', 'owner', $1, 'owner')`, [hashedOwner]);
-    } else {
-      await pool.query(`UPDATE users SET password_hash = $1 WHERE username = 'owner'`, [hashedOwner]);
+    const usersToSeed = [
+      { name: 'Bar Owner', username: 'owner', role: 'owner', pass: ownerPass },
+      { name: 'Barman Staff', username: 'barman', role: 'barman', pass: barmanPass },
+      { name: 'Head Chef', username: 'chef', role: 'chef', pass: chefPass },
+      { name: 'Blessing Waitress', username: 'blessing', role: 'waitress', pass: waitressPass },
+      { name: 'Mary Waitress', username: 'mary', role: 'waitress', pass: waitressPass }
+    ];
+
+    for (const u of usersToSeed) {
+      const hashed = await bcrypt.hash(u.pass, 10);
+      const check = await pool.query('SELECT id FROM users WHERE username = $1', [u.username]);
+      if (check.rows.length === 0) {
+        await pool.query('INSERT INTO users (name, username, password_hash, role) VALUES ($1, $2, $3, $4)', [u.name, u.username, hashed, u.role]);
+      } else {
+        await pool.query('UPDATE users SET password_hash = $1 WHERE username = $2', [hashed, u.username]);
+      }
     }
 
-    // Seed or sync Barman
-    const hashedBarman = await bcrypt.hash(barmanPass, 10);
-    const barmanCheck = await pool.query('SELECT id FROM users WHERE username = $1', ['barman']);
-    if (barmanCheck.rows.length === 0) {
-      await pool.query(`INSERT INTO users (name, username, password_hash, role) VALUES ('Barman Staff', 'barman', $1, 'barman')`, [hashedBarman]);
-    } else {
-      await pool.query(`UPDATE users SET password_hash = $1 WHERE username = 'barman'`, [hashedBarman]);
-    }
-
-    console.log('Database tables and seed users synchronized successfully.');
+    console.log('Database tables and 4 role accounts synchronized.');
   } catch (err) {
-    console.error('Failed to initialize database on startup:', err);
+    console.error('Failed to initialize database:', err);
   }
 }
 
-// Run database setup before starting express
 await ensureDatabase();
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
@@ -125,9 +156,17 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.use('/api', requireAuth);
-
 app.get('/api/me', (req, res) => res.json({ user: req.user }));
 
+// Waitress list for Barman / Chef / Owner
+app.get('/api/waitresses', allowRoles('owner','barman','chef'), async (_req, res) => {
+  try {
+    const result = await pool.query("SELECT id, name FROM users WHERE role='waitress' AND active=TRUE ORDER BY name");
+    res.json({ waitresses: result.rows });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load waitresses.' }); }
+});
+
+// Products & Inventory (Owner / Barman)
 app.get('/api/products', async (_req, res) => {
   try {
     const result = await pool.query('SELECT id,name,unit,quantity,low_stock_threshold,selling_price,active FROM products WHERE active=TRUE ORDER BY name');
@@ -139,7 +178,7 @@ app.post('/api/products', allowRoles('owner'), async (req, res) => {
   const { name, unit = 'bottle', openingQuantity = 0, lowStockThreshold = 10, sellingPrice = 0 } = req.body || {};
   const qty = Number(openingQuantity), threshold = Number(lowStockThreshold), price = Number(sellingPrice);
   if (!String(name || '').trim() || !Number.isInteger(qty) || qty < 0 || !Number.isInteger(threshold) || threshold < 0 || !Number.isFinite(price) || price < 0) {
-    return res.status(400).json({ error: 'Enter a product name and valid non-negative quantities/prices.' });
+    return res.status(400).json({ error: 'Enter valid product details.' });
   }
   const client = await pool.connect();
   try {
@@ -166,14 +205,9 @@ app.post('/api/products', allowRoles('owner'), async (req, res) => {
 app.put('/api/products/:id', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.params.id);
   const { sellingPrice, lowStockThreshold } = req.body || {};
-  if (!Number.isInteger(productId)) return res.status(400).json({ error: 'Invalid product.' });
-  
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [productId]);
-    if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Product not found.' }); }
-    
     const updated = await client.query(
       'UPDATE products SET selling_price = COALESCE($1, selling_price), low_stock_threshold = COALESCE($2, low_stock_threshold) WHERE id=$3 RETURNING *',
       [sellingPrice !== undefined ? Number(sellingPrice) : null, lowStockThreshold !== undefined ? Number(lowStockThreshold) : null, productId]
@@ -182,72 +216,80 @@ app.put('/api/products/:id', allowRoles('owner'), async (req, res) => {
     res.json({ product: updated.rows[0] });
   } catch (e) {
     await client.query('ROLLBACK');
-    console.error(e);
-    res.status(500).json({ error: 'Could not update product.' });
+    console.error(e); res.status(500).json({ error: 'Could not update product.' });
   } finally { client.release(); }
 });
 
 app.delete('/api/products/:id', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.params.id);
-  if (!Number.isInteger(productId)) return res.status(400).json({ error: 'Invalid product.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [productId]);
-    if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Product not found.' }); }
     await client.query('UPDATE products SET active=FALSE WHERE id=$1', [productId]);
     await client.query('COMMIT');
-    res.json({ message: 'Drink removed successfully.' });
+    res.json({ message: 'Drink removed.' });
   } catch (e) {
     await client.query('ROLLBACK');
-    console.error(e);
-    res.status(500).json({ error: 'Could not delete product.' });
+    console.error(e); res.status(500).json({ error: 'Could not delete product.' });
   } finally { client.release(); }
 });
 
-app.post('/api/stock/receive', allowRoles('owner'), async (req, res) => {
-  const productId = Number(req.body?.productId), quantity = Number(req.body?.quantity);
-  const reference = String(req.body?.reference || '').trim();
-  if (!Number.isInteger(productId) || !Number.isInteger(quantity) || quantity <= 0) return res.status(400).json({ error: 'Choose a product and enter a positive whole quantity.' });
-  const client = await pool.connect();
+// Food Menu & Pricing Management (Owner)
+app.get('/api/food/menu', async (_req, res) => {
   try {
-    await client.query('BEGIN');
-    const result = await client.query('SELECT * FROM products WHERE id=$1 AND active=TRUE FOR UPDATE', [productId]);
-    if (!result.rows[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Product not found.' }); }
-    const p = result.rows[0], balance = p.quantity + quantity;
-    await client.query('UPDATE products SET quantity=$1 WHERE id=$2', [balance, productId]);
-    await client.query(
-      `INSERT INTO stock_movements(product_id,movement_type,quantity_change,balance_after,reference,performed_by)
-       VALUES($1,'received',$2,$3,$4,$5)`,
-      [productId, quantity, balance, reference || null, req.user.id]
+    const result = await pool.query('SELECT id,name,serving_option,price,active FROM food_menu WHERE active=TRUE ORDER BY name, serving_option');
+    res.json({ menu: result.rows });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load food menu.' }); }
+});
+
+app.post('/api/food/menu', allowRoles('owner'), async (req, res) => {
+  const { name, servingOption = 'Regular', price = 0 } = req.body || {};
+  const p = Number(price);
+  if (!String(name || '').trim() || !Number.isFinite(p) || p < 0) {
+    return res.status(400).json({ error: 'Valid food item name and price are required.' });
+  }
+  try {
+    const inserted = await pool.query(
+      'INSERT INTO food_menu(name, serving_option, price) VALUES($1, $2, $3) RETURNING *',
+      [String(name).trim(), String(servingOption).trim() || 'Regular', p]
     );
-    await client.query('COMMIT');
-    res.json({ message: 'Stock received.', balance });
-  } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ error: 'Could not receive stock.' }); }
-  finally { client.release(); }
+    res.status(201).json({ item: inserted.rows[0] });
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ error: 'That food item with this serving option already exists.' });
+    console.error(e); res.status(500).json({ error: 'Could not add food item.' });
+  }
 });
 
-app.get('/api/staff', allowRoles('owner'), async (_req, res) => {
+app.put('/api/food/menu/:id', allowRoles('owner'), async (req, res) => {
+  const menuId = Number(req.params.id);
+  const { price, active } = req.body || {};
   try {
-    const result = await pool.query('SELECT id,name,username,role,active,created_at FROM users ORDER BY role,name');
-    res.json({ staff: result.rows });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load staff.' }); }
+    const updated = await pool.query(
+      'UPDATE food_menu SET price = COALESCE($1, price), active = COALESCE($2, active) WHERE id=$3 RETURNING *',
+      [price !== undefined ? Number(price) : null, active !== undefined ? Boolean(active) : null, menuId]
+    );
+    res.json({ item: updated.rows[0] });
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: 'Could not update menu item.' });
+  }
 });
 
+// Drink Dockets (Barman / Owner)
 app.get('/api/dockets', async (req, res) => {
   const search = String(req.query.search || '').trim();
   try {
     const result = await pool.query(
-      `SELECT d.id,d.docket_number,d.status,d.notes,d.created_at,
-              c.name AS created_by_name,
+      `SELECT d.id,d.docket_number,d.status,d.settled,d.settled_at,d.notes,d.created_at,
+              c.name AS created_by_name, w.name AS waitress_name, w.id AS waitress_id,
               COALESCE(json_agg(json_build_object('productId',p.id,'productName',p.name,'quantity',di.quantity,'unitPrice',di.unit_price))
                 FILTER (WHERE di.id IS NOT NULL),'[]') AS items
        FROM dockets d
        JOIN users c ON c.id=d.created_by
+       JOIN users w ON w.id=d.waitress_id
        LEFT JOIN docket_items di ON di.docket_id=d.id
        LEFT JOIN products p ON p.id=di.product_id
        WHERE ($1='' OR d.docket_number ILIKE '%' || $1 || '%')
-       GROUP BY d.id,c.name
+       GROUP BY d.id,c.name,w.name,w.id
        ORDER BY d.created_at DESC LIMIT 100`,
       [search]
     );
@@ -257,17 +299,15 @@ app.get('/api/dockets', async (req, res) => {
 
 app.post('/api/dockets/barman', allowRoles('owner','barman'), async (req, res) => {
   const docketNumber = String(req.body?.docketNumber || '').trim();
+  const waitressId = Number(req.body?.waitressId);
   const items = req.body?.items;
   
-  if (!docketNumber || docketNumber.length > 80 || !Array.isArray(items) || items.length < 1) {
-    return res.status(400).json({ error: 'Docket number and at least one item are required.' });
+  if (!docketNumber || !Number.isInteger(waitressId) || !Array.isArray(items) || items.length < 1) {
+    return res.status(400).json({ error: 'Docket number, waitress, and items are required.' });
   }
   const cleanItems = items.map(i => ({ productId: Number(i.productId), quantity: Number(i.quantity) }));
   if (cleanItems.some(i => !Number.isInteger(i.productId) || !Number.isInteger(i.quantity) || i.quantity <= 0)) {
-    return res.status(400).json({ error: 'Each item must have a product and positive whole quantity.' });
-  }
-  if (new Set(cleanItems.map(i => i.productId)).size !== cleanItems.length) {
-    return res.status(400).json({ error: 'Choose each product only once per docket; combine its quantity.' });
+    return res.status(400).json({ error: 'Invalid item quantities.' });
   }
 
   const client = await pool.connect();
@@ -275,8 +315,8 @@ app.post('/api/dockets/barman', allowRoles('owner','barman'), async (req, res) =
     await client.query('BEGIN');
     const d = await client.query(
       `INSERT INTO dockets(docket_number, created_by, status, waitress_id)
-       VALUES($1, $2, 'issued', $2) RETURNING id, docket_number, status, created_at`,
-      [docketNumber, req.user.id]
+       VALUES($1, $2, 'issued', $3) RETURNING id, docket_number, status, created_at`,
+      [docketNumber, req.user.id, waitressId]
     );
     const docketId = d.rows[0].id;
 
@@ -296,27 +336,22 @@ app.post('/api/dockets/barman', allowRoles('owner','barman'), async (req, res) =
       );
     }
     await client.query('COMMIT');
-    res.status(201).json({ message: 'Docket saved and stock deducted successfully.', docket: d.rows[0] });
+    res.status(201).json({ message: 'Docket saved.', docket: d.rows[0] });
   } catch (e) {
     await client.query('ROLLBACK');
     if (e.code === '23505') return res.status(409).json({ error: 'That docket number already exists.' });
     if (e.message.startsWith('Insufficient stock') || e.message === 'One selected product is unavailable.') {
       return res.status(400).json({ error: e.message });
     }
-    console.error(e);
-    res.status(500).json({ error: 'Could not record docket.' });
+    console.error(e); res.status(500).json({ error: 'Could not record docket.' });
   } finally { client.release(); }
 });
 
 app.put('/api/dockets/:id/edit', allowRoles('owner','barman'), async (req, res) => {
   const docketId = Number(req.params.id);
   const newDocketNumber = String(req.body?.newDocketNumber || '').trim();
+  const waitressId = req.body?.waitressId ? Number(req.body?.waitressId) : null;
   const items = req.body?.items;
-
-  if (!Number.isInteger(docketId) || !Array.isArray(items)) {
-    return res.status(400).json({ error: 'Invalid request data.' });
-  }
-  const cleanItems = items.map(i => ({ productId: Number(i.productId), quantity: Number(i.quantity) }));
 
   const client = await pool.connect();
   try {
@@ -324,13 +359,12 @@ app.put('/api/dockets/:id/edit', allowRoles('owner','barman'), async (req, res) 
     const dResult = await client.query('SELECT * FROM dockets WHERE id=$1 FOR UPDATE', [docketId]);
     const docket = dResult.rows[0];
     if (!docket) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Docket not found.' }); }
+    if (docket.settled) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Cannot edit settled dockets.' }); }
 
     const targetDocketNum = newDocketNumber || docket.docket_number;
-    if (targetDocketNum !== docket.docket_number) {
-      const dup = await client.query('SELECT id FROM dockets WHERE docket_number=$1 AND id<>$2', [targetDocketNum, docketId]);
-      if (dup.rows.length > 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'That docket number already exists.' }); }
-    }
+    const targetWaitress = waitressId || docket.waitress_id;
 
+    // Revert old stock
     const oldItems = await client.query('SELECT * FROM docket_items WHERE docket_id=$1', [docketId]);
     for (const oldItem of oldItems.rows) {
       const pr = await client.query('SELECT id, quantity FROM products WHERE id=$1 FOR UPDATE', [oldItem.product_id]);
@@ -339,92 +373,322 @@ app.put('/api/dockets/:id/edit', allowRoles('owner','barman'), async (req, res) 
         await client.query('UPDATE products SET quantity=$1 WHERE id=$2', [restoredBalance, oldItem.product_id]);
         await client.query(
           `INSERT INTO stock_movements(product_id, movement_type, quantity_change, balance_after, docket_id, reason, performed_by)
-           VALUES($1, 'void_reversal', $2, $3, $4, 'Docket edit/return reversal', $5)`,
+           VALUES($1, 'void_reversal', $2, $3, $4, 'Docket edit reversal', $5)`,
           [oldItem.product_id, oldItem.quantity, restoredBalance, docketId, req.user.id]
         );
       }
     }
     await client.query('DELETE FROM docket_items WHERE docket_id=$1', [docketId]);
+    await client.query('UPDATE dockets SET docket_number=$1, waitress_id=$2 WHERE id=$3', [targetDocketNum, targetWaitress, docketId]);
 
-    await client.query('UPDATE dockets SET docket_number=$1 WHERE id=$2', [targetDocketNum, docketId]);
-
-    for (const item of cleanItems) {
-      if (item.quantity <= 0) continue;
-      const pr = await client.query('SELECT id, name, quantity, selling_price, active FROM products WHERE id=$1 FOR UPDATE', [item.productId]);
+    // Apply new items
+    for (const item of (items || [])) {
+      const qty = Number(item.quantity);
+      if (qty <= 0) continue;
+      const pr = await client.query('SELECT id, name, quantity, selling_price, active FROM products WHERE id=$1 FOR UPDATE', [Number(item.productId)]);
       const p = pr.rows[0];
-      if (!p || !p.active) throw new Error('One selected product is unavailable.');
-      if (p.quantity < item.quantity) throw new Error(`Insufficient stock for ${p.name}. Available: ${p.quantity}, requested: ${item.quantity}.`);
+      if (!p || !p.active) throw new Error('Product unavailable.');
+      if (p.quantity < qty) throw new Error(`Insufficient stock for ${p.name}.`);
       
-      const balance = p.quantity - item.quantity;
+      const balance = p.quantity - qty;
       await client.query('UPDATE products SET quantity=$1 WHERE id=$2', [balance, p.id]);
-      await client.query('INSERT INTO docket_items(docket_id, product_id, quantity, unit_price) VALUES($1, $2, $3, $4)', [docketId, item.productId, item.quantity, p.selling_price]);
+      await client.query('INSERT INTO docket_items(docket_id, product_id, quantity, unit_price) VALUES($1, $2, $3, $4)', [docketId, p.id, qty, p.selling_price]);
       await client.query(
         `INSERT INTO stock_movements(product_id, movement_type, quantity_change, balance_after, docket_id, reason, performed_by)
          VALUES($1, 'issued', $2, $3, $4, 'Docket edited', $5)`,
-        [p.id, -item.quantity, balance, docketId, req.user.id]
+        [p.id, -qty, balance, docketId, req.user.id]
       );
     }
     await client.query('COMMIT');
-    res.json({ message: 'Docket updated successfully and inventory adjusted.' });
+    res.json({ message: 'Docket updated successfully.' });
   } catch (e) {
     await client.query('ROLLBACK');
-    if (e.message.startsWith('Insufficient stock') || e.message === 'One selected product is unavailable.') {
-      return res.status(400).json({ error: e.message });
-    }
-    console.error(e);
-    res.status(500).json({ error: 'Could not update docket.' });
+    console.error(e); res.status(400).json({ error: e.message || 'Could not update docket.' });
   } finally { client.release(); }
 });
 
+// Food Dockets (Chef / Owner)
+app.get('/api/food/dockets', async (req, res) => {
+  const search = String(req.query.search || '').trim();
+  try {
+    const result = await pool.query(
+      `SELECT d.id,d.docket_number,d.status,d.settled,d.settled_at,d.created_at,
+              c.name AS created_by_name, w.name AS waitress_name, w.id AS waitress_id,
+              COALESCE(json_agg(json_build_object('menuItemId',m.id,'itemName',m.name,'servingOption',m.serving_option,'quantity',fdi.quantity,'unitPrice',fdi.unit_price))
+                FILTER (WHERE fdi.id IS NOT NULL),'[]') AS items
+       FROM food_dockets d
+       JOIN users c ON c.id=d.created_by
+       JOIN users w ON w.id=d.waitress_id
+       LEFT JOIN food_docket_items fdi ON fdi.food_docket_id=d.id
+       LEFT JOIN food_menu m ON m.id=fdi.menu_item_id
+       WHERE ($1='' OR d.docket_number ILIKE '%' || $1 || '%')
+       GROUP BY d.id,c.name,w.name,w.id
+       ORDER BY d.created_at DESC LIMIT 100`,
+      [search]
+    );
+    res.json({ dockets: result.rows });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load food dockets.' }); }
+});
+
+app.post('/api/food/dockets', allowRoles('owner','chef'), async (req, res) => {
+  const docketNumber = String(req.body?.docketNumber || '').trim();
+  const waitressId = Number(req.body?.waitressId);
+  const items = req.body?.items;
+
+  if (!docketNumber || !Number.isInteger(waitressId) || !Array.isArray(items) || items.length < 1) {
+    return res.status(400).json({ error: 'Docket number, waitress, and items are required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const d = await client.query(
+      `INSERT INTO food_dockets(docket_number, created_by, status, waitress_id)
+       VALUES($1, $2, 'issued', $3) RETURNING id, docket_number, status, created_at`,
+      [docketNumber, req.user.id, waitressId]
+    );
+    const docketId = d.rows[0].id;
+
+    for (const item of items) {
+      const menuItemId = Number(item.menuItemId);
+      const qty = Number(item.quantity);
+      if (!Number.isInteger(menuItemId) || !Number.isInteger(qty) || qty <= 0) throw new Error('Invalid item or quantity.');
+
+      const menuRes = await client.query('SELECT price, active FROM food_menu WHERE id=$1', [menuItemId]);
+      const m = menuRes.rows[0];
+      if (!m || !m.active) throw new Error('Selected food item is unavailable.');
+
+      await client.query(
+        'INSERT INTO food_docket_items(food_docket_id, menu_item_id, quantity, unit_price) VALUES($1, $2, $3, $4)',
+        [docketId, menuItemId, qty, m.price]
+      );
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ message: 'Food docket recorded.', docket: d.rows[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    if (e.code === '23505') return res.status(409).json({ error: 'That food docket number already exists.' });
+    console.error(e); res.status(400).json({ error: e.message || 'Could not record food docket.' });
+  } finally { client.release(); }
+});
+
+app.put('/api/food/dockets/:id/edit', allowRoles('owner','chef'), async (req, res) => {
+  const docketId = Number(req.params.id);
+  const newDocketNumber = String(req.body?.newDocketNumber || '').trim();
+  const waitressId = req.body?.waitressId ? Number(req.body?.waitressId) : null;
+  const items = req.body?.items;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const dRes = await client.query('SELECT * FROM food_dockets WHERE id=$1 FOR UPDATE', [docketId]);
+    const docket = dRes.rows[0];
+    if (!docket) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Food docket not found.' }); }
+    if (docket.settled) { await client.query('ROLLBACK'); return res.status(403).json({ error: 'Cannot edit settled food dockets.' }); }
+
+    const targetNum = newDocketNumber || docket.docket_number;
+    const targetWaitress = waitressId || docket.waitress_id;
+
+    await client.query('DELETE FROM food_docket_items WHERE food_docket_id=$1', [docketId]);
+    await client.query('UPDATE food_dockets SET docket_number=$1, waitress_id=$2 WHERE id=$3', [targetNum, targetWaitress, docketId]);
+
+    for (const item of (items || [])) {
+      const menuItemId = Number(item.menuItemId);
+      const qty = Number(item.quantity);
+      if (qty <= 0) continue;
+      const menuRes = await client.query('SELECT price, active FROM food_menu WHERE id=$1', [menuItemId]);
+      const m = menuRes.rows[0];
+      if (!m || !m.active) throw new Error('Menu item unavailable.');
+
+      await client.query(
+        'INSERT INTO food_docket_items(food_docket_id, menu_item_id, quantity, unit_price) VALUES($1, $2, $3, $4)',
+        [docketId, menuItemId, qty, m.price]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ message: 'Food docket updated successfully.' });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e); res.status(400).json({ error: e.message || 'Could not update food docket.' });
+  } finally { client.release(); }
+});
+
+// Waitress Portal API (Personal totals & Settlement status)
+app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) => {
+  try {
+    const waitressId = req.user.id;
+    const [drinkRes, foodRes, docketsList, foodDocketsList] = await Promise.all([
+      pool.query(
+        `SELECT COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total
+         FROM dockets d JOIN docket_items di ON di.docket_id=d.id
+         WHERE d.waitress_id=$1 AND d.status='issued'`,
+        [waitressId]
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total
+         FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
+         WHERE fd.waitress_id=$1 AND fd.status='issued'`,
+        [waitressId]
+      ),
+      pool.query(
+        `SELECT d.id, d.docket_number, d.settled, d.settled_at, d.created_at,
+                COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total_amount
+         FROM dockets d LEFT JOIN docket_items di ON di.docket_id=d.id
+         WHERE d.waitress_id=$1 GROUP BY d.id ORDER BY d.created_at DESC LIMIT 50`,
+        [waitressId]
+      ),
+      pool.query(
+        `SELECT fd.id, fd.docket_number, fd.settled, fd.settled_at, fd.created_at,
+                COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total_amount
+         FROM food_dockets fd LEFT JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
+         WHERE fd.waitress_id=$1 GROUP BY fd.id ORDER BY fd.created_at DESC LIMIT 50`,
+        [waitressId]
+      )
+    ]);
+
+    const drinkTotal = Number(drinkRes.rows[0].total);
+    const foodTotal = Number(foodRes.rows[0].total);
+    const combinedTotal = drinkTotal + foodTotal;
+
+    res.json({
+      name: req.user.name,
+      drinkTotal,
+      foodTotal,
+      combinedTotal,
+      docketsCount: docketsList.rows.length + foodDocketsList.rows.length,
+      drinkDockets: docketsList.rows,
+      foodDockets: foodDocketsList.rows
+    });
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: 'Could not load waitress accounting.' });
+  }
+});
+
+// Owner's Waitress Accounting & Settlement Management
+app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res) => {
+  try {
+    const waitresses = await pool.query("SELECT id, name, username FROM users WHERE role='waitress' AND active=TRUE ORDER BY name");
+    
+    const summary = await Promise.all(waitresses.rows.map(async w => {
+      const [drinkRes, foodRes, drinkDockets, foodDockets] = await Promise.all([
+        pool.query(
+          `SELECT COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total
+           FROM dockets d JOIN docket_items di ON di.docket_id=d.id
+           WHERE d.waitress_id=$1 AND d.status='issued'`,
+          [w.id]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total
+           FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
+           WHERE fd.waitress_id=$1 AND fd.status='issued'`,
+          [w.id]
+        ),
+        pool.query(
+          `SELECT d.id, d.docket_number, d.settled, d.settled_at, d.created_at,
+                  COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total_amount
+           FROM dockets d LEFT JOIN docket_items di ON di.docket_id=d.id
+           WHERE d.waitress_id=$1 GROUP BY d.id ORDER BY d.created_at DESC`,
+          [w.id]
+        ),
+        pool.query(
+          `SELECT fd.id, fd.docket_number, fd.settled, fd.settled_at, fd.created_at,
+                  COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total_amount
+           FROM food_dockets fd LEFT JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
+           WHERE fd.waitress_id=$1 GROUP BY fd.id ORDER BY fd.created_at DESC`,
+          [w.id]
+        )
+      ]);
+
+      const drinkTotal = Number(drinkRes.rows[0].total);
+      const foodTotal = Number(foodRes.rows[0].total);
+      const combinedTotal = drinkTotal + foodTotal;
+      const allSettled = [...drinkDockets.rows, ...foodDockets.rows].length > 0 && 
+                         [...drinkDockets.rows, ...foodDockets.rows].every(d => d.settled);
+
+      return {
+        id: w.id,
+        name: w.name,
+        username: w.username,
+        drinkTotal,
+        foodTotal,
+        combinedTotal,
+        status: allSettled ? 'Settled' : 'Awaiting settlement',
+        drinkDockets: drinkDockets.rows,
+        foodDockets: foodDockets.rows
+      };
+    }));
+
+    res.json({ waitresses: summary });
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: 'Could not load waitress accounting reports.' });
+  }
+});
+
+// Owner marks waitress accounting as settled (Locks all her open dockets)
+app.post('/api/owner/settle-waitress/:id', allowRoles('owner'), async (req, res) => {
+  const waitressId = Number(req.params.id);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const now = new Date();
+    
+    await client.query(
+      `UPDATE dockets SET settled = TRUE, settled_by = $1, settled_at = $2 WHERE waitress_id = $3 AND settled = FALSE`,
+      [req.user.id, now, waitressId]
+    );
+    await client.query(
+      `UPDATE food_dockets SET settled = TRUE, settled_by = $1, settled_at = $2 WHERE waitress_id = $3 AND settled = FALSE`,
+      [req.user.id, now, waitressId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ message: 'Waitress accounting marked as settled and dockets locked.' });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e); res.status(500).json({ error: 'Could not settle accounting.' });
+  } finally { client.release(); }
+});
+
+// Reports & Owner Summary
 app.get('/api/reports/summary', allowRoles('owner'), async (_req, res) => {
   try {
-    const [stock, issued, movements] = await Promise.all([
-      pool.query(`SELECT COUNT(*)::int AS product_count, 
-                         COALESCE(SUM(quantity),0)::int AS total_units,
-                         COALESCE(SUM(quantity * selling_price),0)::numeric(12,2) AS total_stock_value,
-                         COUNT(*) FILTER (WHERE quantity > 0 AND quantity <= low_stock_threshold)::int AS low_stock_count
-                  FROM products WHERE active=TRUE AND quantity > 0`),
-      
-      pool.query(`SELECT COUNT(DISTINCT d.id)::int AS dockets_issued_today,
-                         COALESCE(SUM(di.quantity),0)::int AS units_issued_today,
-                         COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS recorded_value_today
-                  FROM dockets d JOIN docket_items di ON di.docket_id=d.id
-                  WHERE d.status='issued' 
-                  AND d.created_at >= (CURRENT_TIMESTAMP::date + INTERVAL '6 hours' - INTERVAL '1 day')
-                  AND d.created_at < (CURRENT_TIMESTAMP::date + INTERVAL '6 hours')`),
-      
-      pool.query(`SELECT sm.id,sm.movement_type,sm.quantity_change,sm.balance_after,sm.reference,sm.reason,sm.created_at,
-                         p.name AS product_name,u.name AS staff_name,d.docket_number
-                  FROM stock_movements sm JOIN products p ON p.id=sm.product_id
-                  JOIN users u ON u.id=sm.performed_by LEFT JOIN dockets d ON d.id=sm.docket_id
-                  ORDER BY sm.created_at DESC LIMIT 30`)
+    const [stock, issuedDrinks, issuedFood, movements] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS product_count, COALESCE(SUM(quantity),0)::int AS total_units, COALESCE(SUM(quantity * selling_price),0)::numeric(12,2) AS total_stock_value FROM products WHERE active=TRUE AND quantity > 0`),
+      pool.query(`SELECT COUNT(DISTINCT d.id)::int AS dockets_issued, COALESCE(SUM(di.quantity),0)::int AS units_issued, COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS recorded_value FROM dockets d JOIN docket_items di ON di.docket_id=d.id WHERE d.status='issued'`),
+      pool.query(`SELECT COUNT(DISTINCT fd.id)::int AS dockets_issued, COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS recorded_value FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id WHERE fd.status='issued'`),
+      pool.query(`SELECT sm.id,sm.movement_type,sm.quantity_change,sm.balance_after,sm.reference,sm.reason,sm.created_at, p.name AS product_name,u.name AS staff_name,d.docket_number FROM stock_movements sm JOIN products p ON p.id=sm.product_id JOIN users u ON u.id=sm.performed_by LEFT JOIN dockets d ON d.id=sm.docket_id ORDER BY sm.created_at DESC LIMIT 30`)
     ]);
-    res.json({ stock: stock.rows[0], issuedToday: issued.rows[0], recentMovements: movements.rows });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load report.' }); }
+
+    res.json({
+      stock: stock.rows[0],
+      drinkSalesToday: issuedDrinks.rows[0],
+      foodSalesToday: issuedFood.rows[0],
+      recentMovements: movements.rows
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Could not load reports.' }); }
 });
 
 app.post('/api/stock/adjust', allowRoles('owner'), async (req, res) => {
   const productId = Number(req.body?.productId), delta = Number(req.body?.quantityChange);
   const reason = String(req.body?.reason || '').trim();
-  if (!Number.isInteger(productId) || !Number.isInteger(delta) || delta === 0 || !reason) return res.status(400).json({ error: 'Product, non-zero quantity change and reason are required.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query('SELECT * FROM products WHERE id=$1 AND active=TRUE FOR UPDATE', [productId]);
-    const p = result.rows[0];
+    const pr = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [productId]);
+    const p = pr.rows[0];
     if (!p) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Product not found.' }); }
     const balance = p.quantity + delta;
-    if (balance < 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Adjustment cannot make stock negative.' }); }
+    if (balance < 0) { await client.query('ROLLBACK'); return res.status(409).json({ error: 'Stock cannot be negative.' }); }
     await client.query('UPDATE products SET quantity=$1 WHERE id=$2', [balance, productId]);
     await client.query(
-      `INSERT INTO stock_movements(product_id,movement_type,quantity_change,balance_after,reason,performed_by)
-       VALUES($1,'adjustment',$2,$3,$4,$5)`,
-      [productId,delta,balance,reason,req.user.id]
+      `INSERT INTO stock_movements(product_id,movement_type,quantity_change,balance_after,reason,performed_by) VALUES($1,'adjustment',$2,$3,$4,$5)`,
+      [productId, delta, balance, reason, req.user.id]
     );
     await client.query('COMMIT');
-    res.json({ message: 'Adjustment recorded.', balance });
-  } catch (e) { await client.query('ROLLBACK'); console.error(e); res.status(500).json({ error: 'Could not adjust stock.' }); }
-  finally { client.release(); }
+    res.json({ message: 'Stock adjusted.', balance });
+  } catch (e) {
+    await client.query('ROLLBACK'); console.error(e); res.status(500).json({ error: 'Could not adjust stock.' });
+  } finally { client.release(); }
 });
 
 app.get('/', (_req, res) => {
