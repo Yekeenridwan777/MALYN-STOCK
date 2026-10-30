@@ -118,8 +118,8 @@ async function ensureDatabase() {
       { name: 'Bar Owner', username: 'owner', role: 'owner', pass: ownerPass },
       { name: 'Barman Staff', username: 'barman', role: 'barman', pass: barmanPass },
       { name: 'Head Chef', username: 'chef', role: 'chef', pass: chefPass },
-      { name: 'Blessing Waitress', username: 'blessing', role: 'waitress', pass: waitressPass },
-      { name: 'Mary Waitress', username: 'mary', role: 'waitress', pass: waitressPass }
+      { name: 'Waitress One', username: 'waitress1', role: 'waitress', pass: waitressPass },
+      { name: 'Waitress Two', username: 'waitress2', role: 'waitress', pass: waitressPass }
     ];
 
     for (const u of usersToSeed) {
