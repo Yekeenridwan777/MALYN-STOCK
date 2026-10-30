@@ -485,13 +485,14 @@ function App() {
               <input className="search" placeholder="Search docket number..." value={search} onChange={e=>setSearch(e.target.value)} />
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Total Amount</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                   <tbody>
                     {dockets.map(d => (
                       <tr key={d.id}>
                         <td><strong>{d.docket_number}</strong></td>
                         <td>{d.waitress_name || 'Unassigned'}</td>
                         <td>{d.items?.map(i => `${i.productName} (${i.quantity})`).join(', ')}</td>
+                        <td><strong>{currency(d.total_amount)}</strong></td>
                         <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Active'}</span></td>
                         <td>{new Date(d.created_at).toLocaleString()}</td>
                         <td>
@@ -526,13 +527,14 @@ function App() {
               <h2>Food Dockets</h2>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Docket #</th><th>Waitress</th><th>Items</th><th>Total Amount</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
                   <tbody>
                     {foodDockets.map(d => (
                       <tr key={d.id}>
                         <td><strong>{d.docket_number}</strong></td>
                         <td>{d.waitress_name || 'Unassigned'}</td>
                         <td>{d.items?.map(i => `${i.itemName} (${i.servingOption}) x${i.quantity}`).join(', ')}</td>
+                        <td><strong>{currency(d.total_amount)}</strong></td>
                         <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Active'}</span></td>
                         <td>{new Date(d.created_at).toLocaleString()}</td>
                         <td>
