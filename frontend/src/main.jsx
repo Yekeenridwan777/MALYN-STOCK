@@ -438,13 +438,13 @@ function App() {
                     <h4>Drink Dockets</h4>
                     <div className="table-wrap">
                       <table>
-                        <thead><tr><th>Docket #</th><th>Items</th><th>Total</th><th>Status</th><th>Time</th></tr></thead>
+                        <thead><tr><th>Docket #</th><th>Items</th><th>Total Amount</th><th>Status</th><th>Time</th></tr></thead>
                         <tbody>
                           {w.drinkDockets.map(d => (
                             <tr key={d.id}>
                               <td><strong>{d.docket_number}</strong></td>
                               <td>{d.items?.map(it => `${it.productName} (${it.quantity})`).join(', ')}</td>
-                              <td>{currency(d.total_amount)}</td>
+                              <td><strong>{currency(d.total_amount)}</strong></td>
                               <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Open'}</span></td>
                               <td>{new Date(d.created_at).toLocaleString()}</td>
                             </tr>
@@ -456,13 +456,13 @@ function App() {
                     <h4 style={{marginTop: '12px'}}>Food Dockets</h4>
                     <div className="table-wrap">
                       <table>
-                        <thead><tr><th>Docket #</th><th>Items</th><th>Total</th><th>Status</th><th>Time</th></tr></thead>
+                        <thead><tr><th>Docket #</th><th>Items</th><th>Total Amount</th><th>Status</th><th>Time</th></tr></thead>
                         <tbody>
                           {w.foodDockets.map(d => (
                             <tr key={d.id}>
                               <td><strong>{d.docket_number}</strong></td>
                               <td>{d.items?.map(it => `${it.itemName} (${it.servingOption}) x${it.quantity}`).join(', ')}</td>
-                              <td>{currency(d.total_amount)}</td>
+                              <td><strong>{currency(d.total_amount)}</strong></td>
                               <td><span className={d.settled ? 'pill good' : 'pill warning'}>{d.settled ? 'Balanced' : 'Open'}</span></td>
                               <td>{new Date(d.created_at).toLocaleString()}</td>
                             </tr>

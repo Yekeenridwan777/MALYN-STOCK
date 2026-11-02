@@ -33,7 +33,7 @@ async function ensureDatabase() {
       );
       
       ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
-      ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner','barman','waitress','chef'));
+      ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('owner','barman','waitress','chef','cashier'));
 
       CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY,
@@ -111,6 +111,12 @@ async function ensureDatabase() {
         quantity INTEGER NOT NULL CHECK (quantity > 0),
         unit_price NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0)
       );
+
+      -- PERFORMANCE INDEXES TO ELIMINATE SLOW LOADING / LAG
+      CREATE INDEX IF NOT EXISTS idx_dockets_waitress_settled ON dockets(waitress_id, settled);
+      CREATE INDEX IF NOT EXISTS idx_food_dockets_waitress_settled ON food_dockets(waitress_id, settled);
+      CREATE INDEX IF NOT EXISTS idx_docket_items_docket_id ON docket_items(docket_id);
+      CREATE INDEX IF NOT EXISTS idx_food_docket_items_docket_id ON food_docket_items(food_docket_id);
     `);
 
     await pool.query("DELETE FROM users WHERE username IN ('blessing', 'mary')");
@@ -119,11 +125,13 @@ async function ensureDatabase() {
     const barmanPass = process.env.SEED_BARMAN_PASSWORD || 'barman123';
     const chefPass = process.env.SEED_CHEF_PASSWORD || 'chef123';
     const waitressPass = process.env.SEED_WAITRESS_PASSWORD || 'waitress123';
+    const cashierPass = process.env.SEED_CASHIER_PASSWORD || 'cashier123';
 
     const usersToSeed = [
       { name: 'Bar Owner', username: 'owner', role: 'owner', pass: ownerPass },
       { name: 'Barman Staff', username: 'barman', role: 'barman', pass: barmanPass },
       { name: 'Head Chef', username: 'chef', role: 'chef', pass: chefPass },
+      { name: 'Cashier Staff', username: 'cashier', role: 'cashier', pass: cashierPass },
       { name: 'Waitress 1', username: 'waitress1', role: 'waitress', pass: waitressPass },
       { name: 'Waitress 2', username: 'waitress2', role: 'waitress', pass: waitressPass },
       { name: 'Waitress 3', username: 'waitress3', role: 'waitress', pass: waitressPass },
@@ -173,7 +181,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.use('/api', requireAuth);
 app.get('/api/me', (req, res) => res.json({ user: req.user }));
 
-app.get('/api/waitresses', allowRoles('owner','barman','chef'), async (_req, res) => {
+app.get('/api/waitresses', allowRoles('owner','barman','chef','cashier'), async (_req, res) => {
   try {
     const result = await pool.query("SELECT id, name FROM users WHERE role='waitress' AND active=TRUE ORDER BY name");
     res.json({ waitresses: result.rows });
@@ -674,7 +682,7 @@ app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) 
   }
 });
 
-app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res) => {
+app.get('/api/owner/waitress-accounting', allowRoles('owner','cashier'), async (_req, res) => {
   try {
     const waitresses = await pool.query("SELECT id, name, username FROM users WHERE role='waitress' AND active=TRUE ORDER BY name");
     
@@ -737,7 +745,7 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner'), async (_req, res)
   }
 });
 
-app.post('/api/owner/settle-waitress/:id', allowRoles('owner'), async (req, res) => {
+app.post('/api/owner/settle-waitress/:id', allowRoles('owner','cashier'), async (req, res) => {
   const waitressId = Number(req.params.id);
   const client = await pool.connect();
   try {
@@ -761,7 +769,7 @@ app.post('/api/owner/settle-waitress/:id', allowRoles('owner'), async (req, res)
   } finally { client.release(); }
 });
 
-app.get('/api/reports/summary', allowRoles('owner'), async (_req, res) => {
+app.get('/api/reports/summary', allowRoles('owner','cashier'), async (_req, res) => {
   try {
     const [stock, issuedDrinks, issuedFood, movements] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS product_count, COALESCE(SUM(quantity),0)::int AS total_units, COALESCE(SUM(quantity * selling_price),0)::numeric(12,2) AS total_stock_value FROM products WHERE active=TRUE AND quantity > 0`),
