@@ -382,8 +382,8 @@ app.post('/api/dockets/barman', allowRoles('owner','barman'), async (req, res) =
   try {
     await client.query('BEGIN');
     const d = await client.query(
-      `INSERT INTO dockets(docket_number, created_by, status, waitress_id)
-       VALUES($1, $2, 'issued', $3) RETURNING id, docket_number, status, created_at`,
+      `INSERT INTO dockets(docket_number, created_by, status, waitress_id, settled)
+       VALUES($1, $2, 'issued', $3, FALSE) RETURNING id, docket_number, status, created_at`,
       [docketNumber, req.user.id, waitressId]
     );
     const docketId = d.rows[0].id;
@@ -542,8 +542,8 @@ app.post('/api/food/dockets', allowRoles('owner','chef'), async (req, res) => {
   try {
     await client.query('BEGIN');
     const d = await client.query(
-      `INSERT INTO food_dockets(docket_number, created_by, status, waitress_id)
-       VALUES($1, $2, 'issued', $3) RETURNING id, docket_number, status, created_at`,
+      `INSERT INTO food_dockets(docket_number, created_by, status, waitress_id, settled)
+       VALUES($1, $2, 'issued', $3, FALSE) RETURNING id, docket_number, status, created_at`,
       [docketNumber, req.user.id, waitressId]
     );
     const docketId = d.rows[0].id;
@@ -639,13 +639,13 @@ app.get('/api/waitress/my-accounting', allowRoles('waitress'), async (req, res) 
       pool.query(
         `SELECT COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total
          FROM dockets d JOIN docket_items di ON di.docket_id=d.id
-         WHERE d.waitress_id=$1 AND d.status='issued' AND d.settled=FALSE`,
+         WHERE d.waitress_id=$1 AND d.settled=FALSE`,
         [waitressId]
       ),
       pool.query(
         `SELECT COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total
          FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
-         WHERE fd.waitress_id=$1 AND fd.status='issued' AND fd.settled=FALSE`,
+         WHERE fd.waitress_id=$1 AND fd.settled=FALSE`,
         [waitressId]
       ),
       pool.query(
@@ -691,13 +691,13 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner','cashier'), async (
         pool.query(
           `SELECT COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS total
            FROM dockets d JOIN docket_items di ON di.docket_id=d.id
-           WHERE d.waitress_id=$1 AND d.status='issued' AND d.settled=FALSE`,
+           WHERE d.waitress_id=$1 AND d.settled=FALSE`,
           [w.id]
         ),
         pool.query(
           `SELECT COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total
            FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id
-           WHERE fd.waitress_id=$1 AND fd.status='issued' AND fd.settled=FALSE`,
+           WHERE fd.waitress_id=$1 AND fd.settled=FALSE`,
           [w.id]
         ),
         pool.query(
@@ -711,7 +711,6 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner','cashier'), async (
         ),
         pool.query(
           `SELECT fd.id, fd.docket_number, fd.settled, fd.settled_at, fd.created_at,
-                  COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS total_amount,
                   COALESCE(json_agg(json_build_object('itemName',m.name,'servingOption',m.serving_option,'quantity',fdi.quantity,'unitPrice',fdi.unit_price))
                     FILTER (WHERE fdi.id IS NOT NULL),'[]') AS items
            FROM food_dockets fd LEFT JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id LEFT JOIN food_menu m ON m.id=fdi.menu_item_id
@@ -724,7 +723,7 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner','cashier'), async (
       const foodTotal = Number(foodRes.rows[0].total);
       const combinedTotal = drinkTotal + foodTotal;
       const allDockets = [...drinkDockets.rows, ...foodDockets.rows];
-      const allSettled = allDockets.length > 0 && allDockets.every(d => d.settled);
+      const allBalancedOrEmpty = allDockets.length === 0 || allDockets.every(d => d.settled);
 
       return {
         id: w.id,
@@ -733,7 +732,7 @@ app.get('/api/owner/waitress-accounting', allowRoles('owner','cashier'), async (
         drinkTotal,
         foodTotal,
         combinedTotal,
-        status: allSettled ? 'Balanced' : 'Awaiting settlement',
+        status: (combinedTotal === 0 && allBalancedOrEmpty) ? 'Balanced' : 'Awaiting settlement',
         drinkDockets: drinkDockets.rows,
         foodDockets: foodDockets.rows
       };
@@ -773,8 +772,8 @@ app.get('/api/reports/summary', allowRoles('owner','cashier'), async (_req, res)
   try {
     const [stock, issuedDrinks, issuedFood, movements] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS product_count, COALESCE(SUM(quantity),0)::int AS total_units, COALESCE(SUM(quantity * selling_price),0)::numeric(12,2) AS total_stock_value FROM products WHERE active=TRUE AND quantity > 0`),
-      pool.query(`SELECT COUNT(DISTINCT d.id)::int AS dockets_issued, COALESCE(SUM(di.quantity),0)::int AS units_issued, COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS recorded_value FROM dockets d JOIN docket_items di ON di.docket_id=d.id WHERE d.status='issued'`),
-      pool.query(`SELECT COUNT(DISTINCT fd.id)::int AS dockets_issued, COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS recorded_value FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id WHERE fd.status='issued'`),
+      pool.query(`SELECT COUNT(DISTINCT d.id)::int AS dockets_issued, COALESCE(SUM(di.quantity),0)::int AS units_issued, COALESCE(SUM(di.quantity * di.unit_price),0)::numeric(12,2) AS recorded_value FROM dockets d JOIN docket_items di ON di.docket_id=d.id`),
+      pool.query(`SELECT COUNT(DISTINCT fd.id)::int AS dockets_issued, COALESCE(SUM(fdi.quantity * fdi.unit_price),0)::numeric(12,2) AS recorded_value FROM food_dockets fd JOIN food_docket_items fdi ON fdi.food_docket_id=fd.id`),
       pool.query(`SELECT sm.id,sm.movement_type,sm.quantity_change,sm.balance_after,sm.reference,sm.reason,sm.created_at, p.name AS product_name,u.name AS staff_name,d.docket_number FROM stock_movements sm JOIN products p ON p.id=sm.product_id JOIN users u ON u.id=sm.performed_by LEFT JOIN dockets d ON d.id=sm.docket_id ORDER BY sm.created_at DESC LIMIT 50`)
     ]);
 
